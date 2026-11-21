@@ -9,19 +9,29 @@ package injector
 
 static void postCmdV() {
     CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+
+    // Left Command keycode: 55, 'V' keycode: 9
+    CGEventRef cmdDown = CGEventCreateKeyboardEvent(src, (CGKeyCode)55, true);
     CGEventRef vDown = CGEventCreateKeyboardEvent(src, (CGKeyCode)9, true);
     CGEventSetFlags(vDown, kCGEventFlagMaskCommand);
+
     CGEventRef vUp = CGEventCreateKeyboardEvent(src, (CGKeyCode)9, false);
     CGEventSetFlags(vUp, kCGEventFlagMaskCommand);
+    CGEventRef cmdUp = CGEventCreateKeyboardEvent(src, (CGKeyCode)55, false);
 
-    CGEventPost(kCGAnnotatedSessionEventTap, vDown);
-    CGEventPost(kCGHIDEventTap, vDown);
-    usleep(25000); // 25ms key press hold duration so OS event loop dispatches the keystroke
-    CGEventPost(kCGAnnotatedSessionEventTap, vUp);
-    CGEventPost(kCGHIDEventTap, vUp);
+    // Post complete Command+V sequence directly to the login session event tap (1)
+    CGEventPost(kCGSessionEventTap, cmdDown);
+    usleep(15000); // 15ms
+    CGEventPost(kCGSessionEventTap, vDown);
+    usleep(35000); // 35ms hold duration
+    CGEventPost(kCGSessionEventTap, vUp);
+    usleep(15000); // 15ms
+    CGEventPost(kCGSessionEventTap, cmdUp);
 
+    CFRelease(cmdDown);
     CFRelease(vDown);
     CFRelease(vUp);
+    CFRelease(cmdUp);
     CFRelease(src);
 }
 */
@@ -68,15 +78,15 @@ func (d *DarwinInjector) Inject(text string) error {
 		return fmt.Errorf("pbcopy error: %w", err)
 	}
 
-	// 3. Buffer delay to ensure pasteboard server has flushed the new text
-	time.Sleep(80 * time.Millisecond)
+	// 3. Small buffer to ensure macOS pasteboard server is fully synchronized
+	time.Sleep(100 * time.Millisecond)
 
-	// 4. Simulate Cmd+V directly at CoreGraphics HID and Session level
+	// 4. Simulate complete Cmd+V sequence at session level
 	C.postCmdV()
 
-	// 5. Allow target application (Chrome, Safari, VS Code) to consume the clipboard event, then restore original content
-	time.Sleep(450 * time.Millisecond)
-	if hasOld && oldContent != "" {
+	// 5. Allow target app (Chrome, Safari, Slack, Notion) ample time (700ms) to read over IPC, then restore original clipboard
+	time.Sleep(700 * time.Millisecond)
+	if hasOld && oldContent != "" && oldContent != text {
 		_ = d.CopyOnly(oldContent)
 	}
 
