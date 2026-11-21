@@ -107,6 +107,23 @@ func main() {
 		}
 		runFile(cfg, filteredArgs[1])
 
+	case "transcribe":
+		if len(filteredArgs) < 2 {
+			return
+		}
+		eng, err := engine.NewEngine(cfg)
+		if err != nil {
+			return
+		}
+		start := time.Now()
+		text, err := eng.Transcribe(filteredArgs[1])
+		if err != nil || strings.TrimSpace(text) == "" {
+			return
+		}
+		_ = history.Append(text, time.Since(start).Seconds())
+		fmt.Print(text)
+		return
+
 	case "history":
 		runHistory(filteredArgs[1:])
 

@@ -330,7 +330,10 @@ class PushToTalkListener {
     }
 
     func start() {
-        print("🎧 [Aurae Listener] Hardware Engine activo (WindowServer Direct). Cero permisos requeridos.")
+        print("🎧 [Aurae Listener] Hardware Engine activo (WindowServer Direct).")
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        _ = AXIsProcessTrustedWithOptions(options)
+
         pollTimer?.invalidate()
         let timer = Timer(timeInterval: 0.025, repeats: true) { [weak self] _ in
             self?.pollHardwareKeys()
@@ -440,15 +443,63 @@ class PushToTalkListener {
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: self.auraeBin)
                 let model = AppState.shared.config.model.isEmpty ? "small" : AppState.shared.config.model
-                p.arguments = ["--model", model, "file", self.audioPath]
+                p.arguments = ["--model", model, "transcribe", self.audioPath]
+                let pipe = Pipe()
+                p.standardOutput = pipe
                 try? p.run()
                 p.waitUntilExit()
+
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    self.pasteDirectly(text)
+                }
             }
 
             self.hud.hide()
 
             DispatchQueue.main.async {
                 AppState.shared.loadHistory()
+            }
+        }
+    }
+
+    func pasteDirectly(_ text: String) {
+        let pb = NSPasteboard.general
+        let oldString = pb.string(forType: .string)
+
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+
+        usleep(40000) // 40ms buffer
+
+        let src = CGEventSource(stateID: .hidSystemState)
+        let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: true)
+        let vDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)
+        vDown?.flags = .maskCommand
+        let vUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
+        vUp?.flags = .maskCommand
+        let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false)
+
+        cmdDown?.post(tap: .cgSessionEventTap)
+        usleep(15000)
+        vDown?.post(tap: .cgSessionEventTap)
+        usleep(35000)
+        vUp?.post(tap: .cgSessionEventTap)
+        usleep(15000)
+        cmdUp?.post(tap: .cgSessionEventTap)
+
+        cmdDown?.post(tap: .cghidEventTap)
+        usleep(15000)
+        vDown?.post(tap: .cghidEventTap)
+        usleep(35000)
+        vUp?.post(tap: .cghidEventTap)
+        usleep(15000)
+        cmdUp?.post(tap: .cghidEventTap)
+
+        if let old = oldString, !old.isEmpty && old != text {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.7) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(old, forType: .string)
             }
         }
     }
