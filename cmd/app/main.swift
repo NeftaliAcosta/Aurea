@@ -296,7 +296,7 @@ class PushToTalkListener {
     let auraeBin: String
     let hud = HUDOverlay()
 
-    private var eventTap: CFMachPort?
+    var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var permissionTimer: Timer?
 
@@ -388,6 +388,7 @@ class PushToTalkListener {
         CGEvent.tapEnable(tap: tap, enable: true)
         print("🎧 [Aurae Listener] EventTap global activo y escuchando.")
         DispatchQueue.main.async {
+            AppState.shared.objectWillChange.send()
             AppState.shared.hasAccessibilityPermission = true
         }
     }
@@ -909,6 +910,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            AppState.shared.hasAccessibilityPermission = (PushToTalkListener.shared.eventTap != nil)
+            AppState.shared.objectWillChange.send()
             AppState.shared.loadHistory()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApplication.shared.activate(ignoringOtherApps: true)
