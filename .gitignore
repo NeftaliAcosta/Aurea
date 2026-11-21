@@ -1,0 +1,26 @@
+# Binaries
+bin/
+/aurae
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Audio recordings / temp files
+*.wav
+*.mp3
+*.tmp
+*.downloading
+
+# Models cache (keep models local, don't commit gigabytes of weights to git)
+models/*.bin
+models/*.pt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Scratch files
+test
+test.*
+.github/context-mode/
