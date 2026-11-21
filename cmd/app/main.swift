@@ -289,17 +289,12 @@ class PushToTalkListener {
     static let shared = PushToTalkListener()
 
     var isRecording = false
-    var isOptionDown = false
-    var isSpaceDown = false
     var recProcess: Process?
     let audioPath = "/tmp/aurae_ptt.wav"
     let auraeBin: String
     let hud = HUDOverlay()
 
-    var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
-    private var permissionTimer: Timer?
-    private var watchdogTimer: Timer?
+    private var pollTimer: Timer?
 
     init() {
         let bundleInside = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/aurae-engine").path
@@ -321,134 +316,50 @@ class PushToTalkListener {
     }
 
     func start() {
-        checkAndSetupTap()
+        print("🎧 [Aurae Listener] Hardware Engine activo (WindowServer Direct). Cero permisos requeridos.")
+        pollTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.025, repeats: true) { [weak self] _ in
+            self?.pollHardwareKeys()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.pollTimer = timer
     }
 
-    func checkAndSetupTap() {
-        setupEventTap()
-
-        if eventTap != nil {
-            DispatchQueue.main.async {
-                AppState.shared.hasAccessibilityPermission = true
-            }
-            return
-        }
-
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        _ = AXIsProcessTrustedWithOptions(options)
-
-        DispatchQueue.main.async {
-            AppState.shared.hasAccessibilityPermission = false
-        }
-
-        print("⚠️ Permiso de Accesibilidad / Monitoreo requerido en Ajustes del Sistema.")
-        DispatchQueue.main.async { [weak self] in
-            self?.permissionTimer?.invalidate()
-            self?.permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-                self?.setupEventTap()
-                if self?.eventTap != nil {
-                    print("✅ EventTap activo y funcionando.")
-                    AppState.shared.hasAccessibilityPermission = true
-                    timer.invalidate()
-                    self?.permissionTimer = nil
-                }
-            }
-        }
-    }
-
-    func setupEventTap() {
-        if eventTap != nil { return }
-
-        let eventMask = (1 << CGEventType.keyDown.rawValue) |
-                        (1 << CGEventType.keyUp.rawValue) |
-                        (1 << CGEventType.flagsChanged.rawValue)
-
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(eventMask),
-            callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
-                let listener = Unmanaged<PushToTalkListener>.fromOpaque(refcon).takeUnretainedValue()
-                return listener.handleEvent(proxy: proxy, type: type, event: event)
-            },
-            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        ) else {
-            print("❌ Error creando EventTap de teclado. Reintentando en 1.5s...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                self?.setupEventTap()
-            }
-            return
-        }
-
-        self.eventTap = tap
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        self.runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-        print("🎧 [Aurae Listener] EventTap global activo y escuchando.")
-        DispatchQueue.main.async {
-            AppState.shared.objectWillChange.send()
-            AppState.shared.hasAccessibilityPermission = true
-        }
-    }
-
-    func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = eventTap {
-                CGEvent.tapEnable(tap: tap, enable: true)
-            }
-            return Unmanaged.passRetained(event)
-        }
-
-        let flags = event.flags
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+    func pollHardwareKeys() {
+        let flags = CGEventSource.flagsState(.combinedSessionState)
         let mode = AppState.shared.config.hotkey
 
-        // Escape cancels recording immediately
-        if isRecording && keyCode == 53 {
-            cancelRecording()
-            return nil
-        }
-
-        var isComboActive = false
-
+        var isCombo = false
         switch mode {
         case "option+space":
-            isOptionDown = flags.contains(.maskAlternate)
-            if type == .keyDown && keyCode == 49 { isSpaceDown = true }
-            if type == .keyUp && keyCode == 49 { isSpaceDown = false }
-            if type == .flagsChanged && !isOptionDown { isSpaceDown = false }
-            isComboActive = isOptionDown && isSpaceDown
-
+            let isOpt = flags.contains(.maskAlternate)
+            let isSpace = CGEventSource.keyState(.combinedSessionState, key: 49)
+            isCombo = isOpt && isSpace
         case "control+space":
-            let isCtrlDown = flags.contains(.maskControl)
-            if type == .keyDown && keyCode == 49 { isSpaceDown = true }
-            if type == .keyUp && keyCode == 49 { isSpaceDown = false }
-            if type == .flagsChanged && !isCtrlDown { isSpaceDown = false }
-            isComboActive = isCtrlDown && isSpaceDown
-
+            let isCtrl = flags.contains(.maskControl)
+            let isSpace = CGEventSource.keyState(.combinedSessionState, key: 49)
+            isCombo = isCtrl && isSpace
         case "control+option":
-            isComboActive = flags.contains(.maskControl) && flags.contains(.maskAlternate)
-
+            isCombo = flags.contains(.maskControl) && flags.contains(.maskAlternate)
         default: // "shift+option"
-            isComboActive = flags.contains(.maskShift) && flags.contains(.maskAlternate)
+            isCombo = flags.contains(.maskShift) && flags.contains(.maskAlternate)
         }
 
-        if isComboActive {
+        // Escape key (keycode 53) cancels recording immediately
+        if isRecording && CGEventSource.keyState(.combinedSessionState, key: 53) {
+            cancelRecording()
+            return
+        }
+
+        if isCombo {
             if !isRecording {
                 startRecording()
-                if keyCode == 49 { return nil } // swallow space if used
             }
         } else {
             if isRecording {
                 stopRecording()
-                if keyCode == 49 { return nil }
             }
         }
-
-        return Unmanaged.passRetained(event)
     }
 
     func startRecording() {
@@ -464,43 +375,12 @@ class PushToTalkListener {
         p.arguments = ["-q", "-c", "1", "-r", "16000", audioPath]
         try? p.run()
         self.recProcess = p
-
-        // Hardware watchdog: polls actual modifier key states directly from window server every 120ms.
-        // Guarantees recording stops even if focus shifts to a modal or another window.
-        DispatchQueue.main.async { [weak self] in
-            self?.watchdogTimer?.invalidate()
-            self?.watchdogTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
-                guard let self = self, self.isRecording else { return }
-                let hwFlags = CGEventSource.flagsState(.combinedSessionState)
-                let mode = AppState.shared.config.hotkey
-
-                var isHardwareHolding = false
-                switch mode {
-                case "control+option":
-                    isHardwareHolding = hwFlags.contains(.maskControl) && hwFlags.contains(.maskAlternate)
-                case "option+space":
-                    isHardwareHolding = hwFlags.contains(.maskAlternate)
-                case "control+space":
-                    isHardwareHolding = hwFlags.contains(.maskControl)
-                default: // "shift+option"
-                    isHardwareHolding = hwFlags.contains(.maskShift) && hwFlags.contains(.maskAlternate)
-                }
-
-                if !isHardwareHolding {
-                    self.stopRecording()
-                }
-            }
-        }
     }
 
     func cancelRecording() {
         guard isRecording else { return }
         isRecording = false
-        DispatchQueue.main.async {
-            self.watchdogTimer?.invalidate()
-            self.watchdogTimer = nil
-            AppState.shared.isListening = false
-        }
+        DispatchQueue.main.async { AppState.shared.isListening = false }
         hud.hide()
         recProcess?.interrupt()
         recProcess?.waitUntilExit()
@@ -510,11 +390,7 @@ class PushToTalkListener {
     func stopRecording() {
         guard isRecording else { return }
         isRecording = false
-        DispatchQueue.main.async {
-            self.watchdogTimer?.invalidate()
-            self.watchdogTimer = nil
-            AppState.shared.isListening = false
-        }
+        DispatchQueue.main.async { AppState.shared.isListening = false }
 
         hud.showProcessing()
         recProcess?.interrupt()
@@ -535,7 +411,6 @@ class PushToTalkListener {
 
             self.hud.hide()
 
-            // Reload history on main thread
             DispatchQueue.main.async {
                 AppState.shared.loadHistory()
             }
@@ -561,9 +436,9 @@ struct PopoverView: View {
                         .font(.system(size: 15, weight: .bold))
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(state.isListening ? Color.red : (state.hasAccessibilityPermission ? Color.green : Color.orange))
+                            .fill(state.isListening ? Color.red : Color.green)
                             .frame(width: 7, height: 7)
-                        Text(state.isListening ? "Escuchando..." : (state.hasAccessibilityPermission ? "Listo en segundo plano" : "Requiere Accesibilidad"))
+                        Text(state.isListening ? "Escuchando..." : "Listo en segundo plano")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
@@ -573,30 +448,6 @@ struct PopoverView: View {
             .padding(.horizontal, 16)
             .padding(.top, 16)
             .padding(.bottom, 12)
-
-            if !state.hasAccessibilityPermission {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                        .font(.system(size: 11))
-                    Text("Activa Accesibilidad para Aurae")
-                        .font(.system(size: 11))
-                    Spacer()
-                    Button("Abrir Ajustes") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .font(.system(size: 10, weight: .bold))
-                    .buttonStyle(BorderlessButtonStyle())
-                    .foregroundColor(.blue)
-                }
-                .padding(8)
-                .background(Color.orange.opacity(0.12))
-                .cornerRadius(6)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-            }
 
             // Tab Picker
             Picker("", selection: $state.selectedTab) {
@@ -962,8 +813,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            AppState.shared.hasAccessibilityPermission = (PushToTalkListener.shared.eventTap != nil)
-            AppState.shared.objectWillChange.send()
             AppState.shared.loadHistory()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApplication.shared.activate(ignoringOtherApps: true)
