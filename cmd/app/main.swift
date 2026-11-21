@@ -223,9 +223,24 @@ class HUDOverlay {
         }
     }
 
+    func reposition() {
+        let mouseLoc = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouseLoc, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens.first
+        guard let screen = screen, let window = self.window else { return }
+
+        let width = window.frame.width
+        let height = window.frame.height
+        let screenFrame = screen.frame
+        let x = screenFrame.origin.x + (screenFrame.width - width) / 2
+        let y = screenFrame.origin.y + 82
+
+        window.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
     func showListening() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let window = self.window else { return }
+            self.reposition()
             self.updateColors()
             NSSound(named: "Pop")?.play()
 
@@ -382,9 +397,22 @@ class PushToTalkListener {
         isRecording = false
         DispatchQueue.main.async { AppState.shared.isListening = false }
         hud.hide()
-        recProcess?.interrupt()
-        recProcess?.waitUntilExit()
-        try? FileManager.default.removeItem(atPath: audioPath)
+        let processToStop = self.recProcess
+        self.recProcess = nil
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            processToStop?.interrupt()
+            let startTime = Date()
+            while processToStop?.isRunning == true && Date().timeIntervalSince(startTime) < 0.5 {
+                usleep(30000)
+            }
+            if processToStop?.isRunning == true {
+                processToStop?.terminate()
+            }
+            if let path = self?.audioPath {
+                try? FileManager.default.removeItem(atPath: path)
+            }
+        }
     }
 
     func stopRecording() {
@@ -393,11 +421,20 @@ class PushToTalkListener {
         DispatchQueue.main.async { AppState.shared.isListening = false }
 
         hud.showProcessing()
-        recProcess?.interrupt()
-        recProcess?.waitUntilExit()
+        let processToStop = self.recProcess
+        self.recProcess = nil
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
+
+            processToStop?.interrupt()
+            let startTime = Date()
+            while processToStop?.isRunning == true && Date().timeIntervalSince(startTime) < 0.8 {
+                usleep(30000)
+            }
+            if processToStop?.isRunning == true {
+                processToStop?.terminate()
+            }
 
             if let attrs = try? FileManager.default.attributesOfItem(atPath: self.audioPath),
                let size = attrs[.size] as? Int64, size > 1000 {
