@@ -449,13 +449,16 @@ class PushToTalkListener {
                 try? p.run()
                 p.waitUntilExit()
 
+                // Hide HUD immediately so active window regains full clean focus
+                self.hud.hide()
+
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                     self.pasteDirectly(text)
                 }
+            } else {
+                self.hud.hide()
             }
-
-            self.hud.hide()
 
             DispatchQueue.main.async {
                 AppState.shared.loadHistory()
@@ -470,16 +473,34 @@ class PushToTalkListener {
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        usleep(40000) // 40ms buffer
+        // 1. Wait until user has physically released Shift, Option, and Control
+        // Prevents synthetic Cmd+V from merging into Shift+Cmd+V or Option+Cmd+V
+        var retries = 0
+        while retries < 25 {
+            let hwFlags = CGEventSource.flagsState(.combinedSessionState)
+            if !hwFlags.contains(.maskShift) && !hwFlags.contains(.maskAlternate) && !hwFlags.contains(.maskControl) {
+                break
+            }
+            usleep(20000) // 20ms
+            retries += 1
+        }
+        usleep(80000) // 80ms settling buffer for OS focus and event queue
 
+        // 2. Synthesize clean Cmd+V keystroke directly to active window
         let src = CGEventSource(stateID: .hidSystemState)
         let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: true)
+        cmdDown?.flags = .maskCommand
+
         let vDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)
         vDown?.flags = .maskCommand
+
         let vUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
         vUp?.flags = .maskCommand
-        let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false)
 
+        let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false)
+        cmdUp?.flags = []
+
+        // Post to session tap (delivers to active GUI window)
         cmdDown?.post(tap: .cgSessionEventTap)
         usleep(15000)
         vDown?.post(tap: .cgSessionEventTap)
@@ -488,6 +509,7 @@ class PushToTalkListener {
         usleep(15000)
         cmdUp?.post(tap: .cgSessionEventTap)
 
+        // Also post to HID tap as fallback
         cmdDown?.post(tap: .cghidEventTap)
         usleep(15000)
         vDown?.post(tap: .cghidEventTap)
@@ -496,8 +518,9 @@ class PushToTalkListener {
         usleep(15000)
         cmdUp?.post(tap: .cghidEventTap)
 
+        // 3. Restore previous clipboard after 2.5s (ample time for Chrome/Notion/Slack to read over IPC)
         if let old = oldString, !old.isEmpty && old != text {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.7) {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(old, forType: .string)
             }
