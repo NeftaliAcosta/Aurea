@@ -2,6 +2,26 @@
 
 package injector
 
+/*
+#cgo LDFLAGS: -framework ApplicationServices
+#include <ApplicationServices/ApplicationServices.h>
+
+static void postCmdV() {
+    CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
+    CGEventRef vDown = CGEventCreateKeyboardEvent(src, (CGKeyCode)9, true);
+    CGEventSetFlags(vDown, kCGEventFlagMaskCommand);
+    CGEventRef vUp = CGEventCreateKeyboardEvent(src, (CGKeyCode)9, false);
+
+    CGEventPost(kCGHIDEventTap, vDown);
+    CGEventPost(kCGHIDEventTap, vUp);
+
+    CFRelease(vDown);
+    CFRelease(vUp);
+    CFRelease(src);
+}
+*/
+import "C"
+
 import (
 	"fmt"
 	"os/exec"
@@ -44,21 +64,15 @@ func (d *DarwinInjector) Inject(text string) error {
 	}
 
 	// 3. Small delay to ensure clipboard buffer is populated
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
-	// 4. Simulate Cmd+V using AppleScript
-	script := `tell application "System Events" to keystroke "v" using command down`
-	cmd := exec.Command("osascript", "-e", script)
-	pasteErr := cmd.Run()
+	// 4. Simulate Cmd+V directly at CoreGraphics HID level (replaces osascript/System Events)
+	C.postCmdV()
 
 	// 5. Allow target application to consume the clipboard event, then restore original content
 	time.Sleep(180 * time.Millisecond)
 	if hasOld && oldContent != "" {
 		_ = d.CopyOnly(oldContent)
-	}
-
-	if pasteErr != nil {
-		return fmt.Errorf("simulate paste error: %w", pasteErr)
 	}
 
 	return nil
