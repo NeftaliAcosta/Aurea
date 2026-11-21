@@ -15,7 +15,8 @@ build:
 	@cp cmd/app/Info.plist $(APP_BUNDLE)/Contents/Info.plist
 	@cp cmd/app/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
 	@swiftc -O -framework Cocoa -framework SwiftUI -framework Carbon -framework QuartzCore cmd/app/main.swift -o $(APP_BUNDLE)/Contents/MacOS/Aurae
-	@echo "✅ Binarios generados en $(BIN_DIR)/$(APP_NAME) y $(APP_BUNDLE)"
+	@codesign --force --deep -s - $(APP_BUNDLE)
+	@echo "✅ Binarios generados y firmados en $(BIN_DIR)/$(APP_NAME) y $(APP_BUNDLE)"
 
 test:
 	go test -v ./internal/...

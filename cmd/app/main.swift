@@ -324,26 +324,32 @@ class PushToTalkListener {
     }
 
     func checkAndSetupTap() {
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        let accessEnabled = AXIsProcessTrustedWithOptions(options)
-        DispatchQueue.main.async {
-            AppState.shared.hasAccessibilityPermission = accessEnabled
+        setupEventTap()
+
+        if eventTap != nil {
+            DispatchQueue.main.async {
+                AppState.shared.hasAccessibilityPermission = true
+            }
+            return
         }
 
-        if accessEnabled {
-            setupEventTap()
-        } else {
-            print("⚠️ Permiso de Accesibilidad requerido en Ajustes del Sistema.")
-            DispatchQueue.main.async { [weak self] in
-                self?.permissionTimer?.invalidate()
-                self?.permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-                    if AXIsProcessTrusted() {
-                        print("✅ Permiso de Accesibilidad detectado. Iniciando EventTap...")
-                        AppState.shared.hasAccessibilityPermission = true
-                        timer.invalidate()
-                        self?.permissionTimer = nil
-                        self?.setupEventTap()
-                    }
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        _ = AXIsProcessTrustedWithOptions(options)
+
+        DispatchQueue.main.async {
+            AppState.shared.hasAccessibilityPermission = false
+        }
+
+        print("⚠️ Permiso de Accesibilidad / Monitoreo requerido en Ajustes del Sistema.")
+        DispatchQueue.main.async { [weak self] in
+            self?.permissionTimer?.invalidate()
+            self?.permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+                self?.setupEventTap()
+                if self?.eventTap != nil {
+                    print("✅ EventTap activo y funcionando.")
+                    AppState.shared.hasAccessibilityPermission = true
+                    timer.invalidate()
+                    self?.permissionTimer = nil
                 }
             }
         }
