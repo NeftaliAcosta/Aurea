@@ -35,6 +35,7 @@ install: build
 	@echo "Instalando $(APP_NAME) en /usr/local/bin..."
 	@cp $(BIN_DIR)/$(APP_NAME) /usr/local/bin/$(APP_NAME) 2>/dev/null || sudo cp $(BIN_DIR)/$(APP_NAME) /usr/local/bin/$(APP_NAME)
 	@echo "Instalando Aurae.app en /Applications..."
-	@rm -rf /Applications/Aurae.app 2>/dev/null || sudo rm -rf /Applications/Aurae.app
-	@cp -R $(APP_BUNDLE) /Applications/ 2>/dev/null || sudo cp -R $(APP_BUNDLE) /Applications/
+	@rm -rf /Applications/Aurae.app
+	@cp -R $(APP_BUNDLE) /Applications/
+	@codesign --force --deep -s - /Applications/Aurae.app
 	@echo "✅ Instalado. Ejecuta 'open /Applications/Aurae.app' o 'aurae --help'"

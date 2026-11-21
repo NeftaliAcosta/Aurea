@@ -299,6 +299,7 @@ class PushToTalkListener {
     var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var permissionTimer: Timer?
+    private var watchdogTimer: Timer?
 
     init() {
         let bundleInside = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/aurae-engine").path
@@ -405,6 +406,12 @@ class PushToTalkListener {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let mode = AppState.shared.config.hotkey
 
+        // Escape cancels recording immediately
+        if isRecording && keyCode == 53 {
+            cancelRecording()
+            return nil
+        }
+
         var isComboActive = false
 
         switch mode {
@@ -457,12 +464,57 @@ class PushToTalkListener {
         p.arguments = ["-q", "-c", "1", "-r", "16000", audioPath]
         try? p.run()
         self.recProcess = p
+
+        // Hardware watchdog: polls actual modifier key states directly from window server every 120ms.
+        // Guarantees recording stops even if focus shifts to a modal or another window.
+        DispatchQueue.main.async { [weak self] in
+            self?.watchdogTimer?.invalidate()
+            self?.watchdogTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+                guard let self = self, self.isRecording else { return }
+                let hwFlags = CGEventSource.flagsState(.combinedSessionState)
+                let mode = AppState.shared.config.hotkey
+
+                var isHardwareHolding = false
+                switch mode {
+                case "control+option":
+                    isHardwareHolding = hwFlags.contains(.maskControl) && hwFlags.contains(.maskAlternate)
+                case "option+space":
+                    isHardwareHolding = hwFlags.contains(.maskAlternate)
+                case "control+space":
+                    isHardwareHolding = hwFlags.contains(.maskControl)
+                default: // "shift+option"
+                    isHardwareHolding = hwFlags.contains(.maskShift) && hwFlags.contains(.maskAlternate)
+                }
+
+                if !isHardwareHolding {
+                    self.stopRecording()
+                }
+            }
+        }
+    }
+
+    func cancelRecording() {
+        guard isRecording else { return }
+        isRecording = false
+        DispatchQueue.main.async {
+            self.watchdogTimer?.invalidate()
+            self.watchdogTimer = nil
+            AppState.shared.isListening = false
+        }
+        hud.hide()
+        recProcess?.interrupt()
+        recProcess?.waitUntilExit()
+        try? FileManager.default.removeItem(atPath: audioPath)
     }
 
     func stopRecording() {
         guard isRecording else { return }
         isRecording = false
-        DispatchQueue.main.async { AppState.shared.isListening = false }
+        DispatchQueue.main.async {
+            self.watchdogTimer?.invalidate()
+            self.watchdogTimer = nil
+            AppState.shared.isListening = false
+        }
 
         hud.showProcessing()
         recProcess?.interrupt()
