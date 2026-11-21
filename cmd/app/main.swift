@@ -57,6 +57,7 @@ class AppState: ObservableObject {
     @Published var history: [HistoryItem] = []
     @Published var selectedTab = 0
     @Published var isListening = false
+    @Published var hasAccessibilityPermission = true
     @Published var copiedId: String? = nil
     @Published var searchText: String = ""
 
@@ -295,6 +296,10 @@ class PushToTalkListener {
     let auraeBin: String
     let hud = HUDOverlay()
 
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    private var permissionTimer: Timer?
+
     init() {
         let bundleInside = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/aurae-engine").path
         let bundleSibling = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("aurae").path
@@ -315,17 +320,43 @@ class PushToTalkListener {
     }
 
     func start() {
+        checkAndSetupTap()
+    }
+
+    func checkAndSetupTap() {
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         let accessEnabled = AXIsProcessTrustedWithOptions(options)
-        if !accessEnabled {
-            print("⚠️ Permiso de Accesibilidad requerido en Ajustes del Sistema.")
+        DispatchQueue.main.async {
+            AppState.shared.hasAccessibilityPermission = accessEnabled
         }
+
+        if accessEnabled {
+            setupEventTap()
+        } else {
+            print("⚠️ Permiso de Accesibilidad requerido en Ajustes del Sistema.")
+            DispatchQueue.main.async { [weak self] in
+                self?.permissionTimer?.invalidate()
+                self?.permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+                    if AXIsProcessTrusted() {
+                        print("✅ Permiso de Accesibilidad detectado. Iniciando EventTap...")
+                        AppState.shared.hasAccessibilityPermission = true
+                        timer.invalidate()
+                        self?.permissionTimer = nil
+                        self?.setupEventTap()
+                    }
+                }
+            }
+        }
+    }
+
+    func setupEventTap() {
+        if eventTap != nil { return }
 
         let eventMask = (1 << CGEventType.keyDown.rawValue) |
                         (1 << CGEventType.keyUp.rawValue) |
                         (1 << CGEventType.flagsChanged.rawValue)
 
-        guard let eventTap = CGEvent.tapCreate(
+        guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
@@ -337,16 +368,32 @@ class PushToTalkListener {
             },
             userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         ) else {
-            print("❌ Error creando EventTap de teclado.")
+            print("❌ Error creando EventTap de teclado. Reintentando en 1.5s...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.setupEventTap()
+            }
             return
         }
 
-        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        CGEvent.tapEnable(tap: eventTap, enable: true)
+        self.eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        self.runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        print("🎧 [Aurae Listener] EventTap global activo y escuchando.")
+        DispatchQueue.main.async {
+            AppState.shared.hasAccessibilityPermission = true
+        }
     }
 
     func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            return Unmanaged.passRetained(event)
+        }
+
         let flags = event.flags
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let mode = AppState.shared.config.hotkey
@@ -455,9 +502,9 @@ struct PopoverView: View {
                         .font(.system(size: 15, weight: .bold))
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(state.isListening ? Color.red : Color.green)
+                            .fill(state.isListening ? Color.red : (state.hasAccessibilityPermission ? Color.green : Color.orange))
                             .frame(width: 7, height: 7)
-                        Text(state.isListening ? "Escuchando..." : "Listo en segundo plano")
+                        Text(state.isListening ? "Escuchando..." : (state.hasAccessibilityPermission ? "Listo en segundo plano" : "Requiere Accesibilidad"))
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
@@ -467,6 +514,30 @@ struct PopoverView: View {
             .padding(.horizontal, 16)
             .padding(.top, 16)
             .padding(.bottom, 12)
+
+            if !state.hasAccessibilityPermission {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 11))
+                    Text("Activa Accesibilidad para Aurae")
+                        .font(.system(size: 11))
+                    Spacer()
+                    Button("Abrir Ajustes") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .font(.system(size: 10, weight: .bold))
+                    .buttonStyle(BorderlessButtonStyle())
+                    .foregroundColor(.blue)
+                }
+                .padding(8)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(6)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
 
             // Tab Picker
             Picker("", selection: $state.selectedTab) {
