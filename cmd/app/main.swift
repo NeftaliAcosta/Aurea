@@ -229,7 +229,6 @@ class HUDOverlay {
         guard let screen = screen, let window = self.window else { return }
 
         let width = window.frame.width
-        let height = window.frame.height
         let screenFrame = screen.frame
         let x = screenFrame.origin.x + (screenFrame.width - width) / 2
         let y = screenFrame.origin.y + 82
