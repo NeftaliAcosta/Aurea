@@ -604,7 +604,7 @@ class PushToTalkListener {
             }
         }
 
-        // 5. Layer 2: CoreGraphics Cmd+V Simulation
+        // 5. Layer 2: CoreGraphics Cmd+V Simulation (Single Clean Keystroke)
         if !insertedViaAX {
             let source = CGEventSource(stateID: .combinedSessionState)
             source?.setLocalEventsFilterDuringSuppressionState([.permitLocalMouseEvents, .permitLocalKeyboardEvents], state: .eventSuppressionStateSuppressionInterval)
@@ -620,23 +620,6 @@ class PushToTalkListener {
                 usleep(30000) // 30ms hold
                 vUp.post(tap: .cgAnnotatedSessionEventTap)
                 auraeLog("[Inyector] ✅ Evento Cmd+V emitido a cgAnnotatedSessionEventTap")
-
-                // Fallback post to session event tap
-                usleep(15000)
-                vDown.post(tap: .cgSessionEventTap)
-                usleep(30000)
-                vUp.post(tap: .cgSessionEventTap)
-            }
-
-            // 6. Layer 3: AppleScript fallback for stubborn apps
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.08) {
-                let script = "tell application \"System Events\" to keystroke \"v\" using command down"
-                var err: NSDictionary?
-                let appleScript = NSAppleScript(source: script)
-                appleScript?.executeAndReturnError(&err)
-                if let err = err {
-                    auraeLog("[Inyector] AppleScript info: \(err)")
-                }
             }
         }
 
