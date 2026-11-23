@@ -15,7 +15,7 @@ build:
 	@cp cmd/app/Info.plist $(APP_BUNDLE)/Contents/Info.plist
 	@cp cmd/app/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
 	@swiftc -O -framework Cocoa -framework SwiftUI -framework Carbon -framework QuartzCore cmd/app/main.swift -o $(APP_BUNDLE)/Contents/MacOS/Aurae
-	@codesign --force --deep -s - $(APP_BUNDLE)
+	@codesign --force --deep -s - --requirements '=designated => identifier "com.neftaliacosta.aurae"' $(APP_BUNDLE)
 	@echo "✅ Binarios generados y firmados en $(BIN_DIR)/$(APP_NAME) y $(APP_BUNDLE)"
 
 test:
@@ -32,10 +32,10 @@ app: build
 	@open $(APP_BUNDLE)
 
 install: build
-	@echo "Instalando $(APP_NAME) en /usr/local/bin..."
-	@cp $(BIN_DIR)/$(APP_NAME) /usr/local/bin/$(APP_NAME) 2>/dev/null || sudo cp $(BIN_DIR)/$(APP_NAME) /usr/local/bin/$(APP_NAME)
+	@echo "Instalando $(APP_NAME) en /usr/local/bin (si hay permisos)..."
+	@cp $(BIN_DIR)/$(APP_NAME) /usr/local/bin/$(APP_NAME) 2>/dev/null || true
 	@echo "Instalando Aurae.app en /Applications..."
 	@rm -rf /Applications/Aurae.app
 	@cp -R $(APP_BUNDLE) /Applications/
-	@codesign --force --deep -s - /Applications/Aurae.app
-	@echo "✅ Instalado. Ejecuta 'open /Applications/Aurae.app' o 'aurae --help'"
+	@codesign --force --deep -s - --requirements '=designated => identifier "com.neftaliacosta.aurae"' /Applications/Aurae.app
+	@echo "✅ Instalado en /Applications/Aurae.app"

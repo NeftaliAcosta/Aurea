@@ -18,5 +18,7 @@
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Aurae necesita acceso al micrófono para el dictado por voz local.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Aurae necesita enviar pulsaciones de tecla para pegar el dictado automáticamente en tu cursor.</string>
 </dict>
 </plist>

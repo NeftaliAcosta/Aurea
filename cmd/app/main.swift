@@ -2,6 +2,29 @@ import Cocoa
 import SwiftUI
 import Carbon
 import QuartzCore
+import ApplicationServices
+
+// MARK: - Logging
+
+func auraeLog(_ message: String) {
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(timestamp)] \(message)\n"
+    print(line, terminator: "")
+    
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let logURL = home.appendingPathComponent(".aurae/aurae.log")
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: logURL.path) {
+            if let handle = try? FileHandle(forWritingTo: logURL) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            }
+        } else {
+            try? data.write(to: logURL)
+        }
+    }
+}
 
 // MARK: - Models and Config
 
@@ -57,12 +80,13 @@ class AppState: ObservableObject {
     @Published var history: [HistoryItem] = []
     @Published var selectedTab = 0
     @Published var isListening = false
-    @Published var hasAccessibilityPermission = true
+    @Published var hasAccessibilityPermission: Bool = AXIsProcessTrusted()
     @Published var copiedId: String? = nil
     @Published var searchText: String = ""
 
     let configURL: URL
     let historyURL: URL
+    private var permTimer: Timer?
 
     init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -73,6 +97,30 @@ class AppState: ObservableObject {
 
         loadConfig()
         loadHistory()
+        startPermissionWatcher()
+    }
+
+    func startPermissionWatcher() {
+        self.hasAccessibilityPermission = AXIsProcessTrusted()
+        permTimer?.invalidate()
+        permTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            let trusted = AXIsProcessTrusted()
+            if self?.hasAccessibilityPermission != trusted {
+                self?.hasAccessibilityPermission = trusted
+                auraeLog("[Permisos] Estado de Accesibilidad actualizado: \(trusted)")
+            }
+        }
+    }
+
+    func checkAndPromptAccessibility() {
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        let trusted = AXIsProcessTrustedWithOptions(options)
+        self.hasAccessibilityPermission = trusted
+        if !trusted {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     func loadConfig() {
@@ -257,7 +305,7 @@ class HUDOverlay {
 
             window.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.12
+                ctx.duration = 0.10
                 window.animator().alphaValue = 1.0
             }
         }
@@ -288,16 +336,27 @@ class HUDOverlay {
                 bar.removeAllAnimations()
             }
             NSAnimationContext.runAnimationGroup({ ctx in
-                ctx.duration = 0.18
+                ctx.duration = 0.15
                 window.animator().alphaValue = 0.0
             }, completionHandler: {
                 window.orderOut(nil)
             })
         }
     }
+
+    func hideImmediate() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let window = self.window else { return }
+            for bar in self.waveBars {
+                bar.removeAllAnimations()
+            }
+            window.alphaValue = 0.0
+            window.orderOut(nil)
+        }
+    }
 }
 
-// MARK: - Global Listener
+// MARK: - Global Listener & Keystroke Injection
 
 class PushToTalkListener {
     static let shared = PushToTalkListener()
@@ -307,6 +366,7 @@ class PushToTalkListener {
     let audioPath = "/tmp/aurae_ptt.wav"
     let auraeBin: String
     let hud = HUDOverlay()
+    var targetApp: NSRunningApplication?
 
     private var pollTimer: Timer?
 
@@ -330,9 +390,10 @@ class PushToTalkListener {
     }
 
     func start() {
-        print("🎧 [Aurae Listener] Hardware Engine activo (WindowServer Direct).")
+        auraeLog("[Listener] Iniciando Hardware Engine...")
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        _ = AXIsProcessTrustedWithOptions(options)
+        let trusted = AXIsProcessTrustedWithOptions(options)
+        auraeLog("[Listener] AXIsProcessTrusted: \(trusted)")
 
         pollTimer?.invalidate()
         let timer = Timer(timeInterval: 0.025, repeats: true) { [weak self] _ in
@@ -382,6 +443,11 @@ class PushToTalkListener {
     func startRecording() {
         guard !isRecording else { return }
         isRecording = true
+        
+        // Capture the active application window BEFORE showing HUD
+        self.targetApp = NSWorkspace.shared.frontmostApplication
+        auraeLog("[PTT] Grabación iniciada. App destino: \(self.targetApp?.localizedName ?? "Desconocida") (PID: \(self.targetApp?.processIdentifier ?? 0))")
+
         DispatchQueue.main.async { AppState.shared.isListening = true }
 
         hud.showListening()
@@ -397,7 +463,9 @@ class PushToTalkListener {
     func cancelRecording() {
         guard isRecording else { return }
         isRecording = false
+        auraeLog("[PTT] Grabación cancelada por el usuario.")
         DispatchQueue.main.async { AppState.shared.isListening = false }
+
         hud.hide()
         let processToStop = self.recProcess
         self.recProcess = nil
@@ -420,11 +488,13 @@ class PushToTalkListener {
     func stopRecording() {
         guard isRecording else { return }
         isRecording = false
+        auraeLog("[PTT] Teclas soltadas. Procesando audio...")
         DispatchQueue.main.async { AppState.shared.isListening = false }
 
         hud.showProcessing()
         let processToStop = self.recProcess
         self.recProcess = nil
+        let destinationApp = self.targetApp
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
@@ -440,6 +510,7 @@ class PushToTalkListener {
 
             if let attrs = try? FileManager.default.attributesOfItem(atPath: self.audioPath),
                let size = attrs[.size] as? Int64, size > 1000 {
+                auraeLog("[PTT] Audio guardado (\(size) bytes). Transcribiendo con whisper...")
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: self.auraeBin)
                 let model = AppState.shared.config.model.isEmpty ? "small" : AppState.shared.config.model
@@ -449,15 +520,19 @@ class PushToTalkListener {
                 try? p.run()
                 p.waitUntilExit()
 
-                // Hide HUD immediately so active window regains full clean focus
-                self.hud.hide()
+                // Hide HUD immediately so WindowServer returns full focus to the target app
+                self.hud.hideImmediate()
 
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
                 if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-                    self.pasteDirectly(text)
+                    auraeLog("[PTT] Transcripción completada: \"\(text)\"")
+                    self.pasteDirectly(text: text, targetApp: destinationApp)
+                } else {
+                    auraeLog("[PTT] Transcripción vacía o silencio.")
                 }
             } else {
-                self.hud.hide()
+                auraeLog("[PTT] Audio inexistente o demasiado corto.")
+                self.hud.hideImmediate()
             }
 
             DispatchQueue.main.async {
@@ -466,63 +541,111 @@ class PushToTalkListener {
         }
     }
 
-    func pasteDirectly(_ text: String) {
+    func pasteDirectly(text: String, targetApp: NSRunningApplication?) {
+        auraeLog("[Inyector] Iniciando pegado para texto: \"\(text)\"")
+        
         let pb = NSPasteboard.general
         let oldString = pb.string(forType: .string)
 
+        // 1. Put transcribed text into clipboard
         pb.clearContents()
         pb.setString(text, forType: .string)
 
-        // 1. Wait until user has physically released Shift, Option, and Control
-        // Prevents synthetic Cmd+V from merging into Shift+Cmd+V or Option+Cmd+V
+        // 2. Wait until physical modifier keys are completely released
         var retries = 0
-        while retries < 25 {
+        while retries < 30 {
             let hwFlags = CGEventSource.flagsState(.combinedSessionState)
-            if !hwFlags.contains(.maskShift) && !hwFlags.contains(.maskAlternate) && !hwFlags.contains(.maskControl) {
+            let hasShift = hwFlags.contains(.maskShift)
+            let hasAlt = hwFlags.contains(.maskAlternate)
+            let hasCtrl = hwFlags.contains(.maskControl)
+            let hasCmd = hwFlags.contains(.maskCommand)
+            if !hasShift && !hasAlt && !hasCtrl && !hasCmd {
                 break
             }
-            usleep(20000) // 20ms
+            usleep(15000) // 15ms
             retries += 1
         }
-        usleep(80000) // 80ms settling buffer for OS focus and event queue
+        auraeLog("[Inyector] Modificadores físicos liberados (reintentos: \(retries))")
 
-        // 2. Synthesize clean Cmd+V keystroke directly to active window
-        let src = CGEventSource(stateID: .hidSystemState)
-        let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: true)
-        cmdDown?.flags = .maskCommand
+        // 3. Re-activate target app if it lost focus
+        if let app = targetApp, !app.isActive {
+            auraeLog("[Inyector] Reactivando aplicación objetivo: \(app.localizedName ?? "")")
+            app.activate()
+            usleep(60000) // 60ms settling buffer for OS focus
+        } else {
+            usleep(40000) // 40ms buffer
+        }
 
-        let vDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)
-        vDown?.flags = .maskCommand
+        let isTrusted = AXIsProcessTrusted()
+        auraeLog("[Inyector] Permiso Accesibilidad actual: \(isTrusted)")
 
-        let vUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
-        vUp?.flags = .maskCommand
+        if !isTrusted {
+            // Prompt the user for accessibility permission so they can approve it
+            DispatchQueue.main.async {
+                AppState.shared.checkAndPromptAccessibility()
+            }
+        }
 
-        let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false)
-        cmdUp?.flags = []
+        // 4. Layer 1: Direct insertion via Accessibility API (cleanest, doesn't touch clipboard)
+        var insertedViaAX = false
+        if isTrusted, let app = targetApp {
+            let appElement = AXUIElementCreateApplication(app.processIdentifier)
+            var focusedElement: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success,
+               let elem = focusedElement {
+                let axElement = elem as! AXUIElement
+                let setRes = AXUIElementSetAttributeValue(axElement, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
+                if setRes == .success {
+                    insertedViaAX = true
+                    auraeLog("[Inyector] ✅ Inserción directa exitosa vía AXUIElement (kAXSelectedTextAttribute)")
+                } else {
+                    auraeLog("[Inyector] AXUIElement kAXSelectedTextAttribute retornó: \(setRes.rawValue), probando Cmd+V...")
+                }
+            }
+        }
 
-        // Post to session tap (delivers to active GUI window)
-        cmdDown?.post(tap: .cgSessionEventTap)
-        usleep(15000)
-        vDown?.post(tap: .cgSessionEventTap)
-        usleep(35000)
-        vUp?.post(tap: .cgSessionEventTap)
-        usleep(15000)
-        cmdUp?.post(tap: .cgSessionEventTap)
+        // 5. Layer 2: CoreGraphics Cmd+V Simulation
+        if !insertedViaAX {
+            let source = CGEventSource(stateID: .combinedSessionState)
+            source?.setLocalEventsFilterDuringSuppressionState([.permitLocalMouseEvents, .permitLocalKeyboardEvents], state: .eventSuppressionStateSuppressionInterval)
 
-        // Also post to HID tap as fallback
-        cmdDown?.post(tap: .cghidEventTap)
-        usleep(15000)
-        vDown?.post(tap: .cghidEventTap)
-        usleep(35000)
-        vUp?.post(tap: .cghidEventTap)
-        usleep(15000)
-        cmdUp?.post(tap: .cghidEventTap)
+            // Virtual key 9 = ANSI 'v'
+            if let vDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+               let vUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) {
+                vDown.flags = .maskCommand
+                vUp.flags = .maskCommand
 
-        // 3. Restore previous clipboard after 2.5s (ample time for Chrome/Notion/Slack to read over IPC)
+                // Post to annotated session tap (preferred by modern macOS)
+                vDown.post(tap: .cgAnnotatedSessionEventTap)
+                usleep(30000) // 30ms hold
+                vUp.post(tap: .cgAnnotatedSessionEventTap)
+                auraeLog("[Inyector] ✅ Evento Cmd+V emitido a cgAnnotatedSessionEventTap")
+
+                // Fallback post to session event tap
+                usleep(15000)
+                vDown.post(tap: .cgSessionEventTap)
+                usleep(30000)
+                vUp.post(tap: .cgSessionEventTap)
+            }
+
+            // 6. Layer 3: AppleScript fallback for stubborn apps
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.08) {
+                let script = "tell application \"System Events\" to keystroke \"v\" using command down"
+                var err: NSDictionary?
+                let appleScript = NSAppleScript(source: script)
+                appleScript?.executeAndReturnError(&err)
+                if let err = err {
+                    auraeLog("[Inyector] AppleScript info: \(err)")
+                }
+            }
+        }
+
+        // 7. Restore previous clipboard after 2.5 seconds
         if let old = oldString, !old.isEmpty && old != text {
             DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(old, forType: .string)
+                auraeLog("[Inyector] Portapapeles anterior restaurado.")
             }
         }
     }
@@ -546,9 +669,9 @@ struct PopoverView: View {
                         .font(.system(size: 15, weight: .bold))
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(state.isListening ? Color.red : Color.green)
+                            .fill(state.isListening ? Color.red : (state.hasAccessibilityPermission ? Color.green : Color.orange))
                             .frame(width: 7, height: 7)
-                        Text(state.isListening ? "Escuchando..." : "Listo en segundo plano")
+                        Text(state.isListening ? "Escuchando..." : (state.hasAccessibilityPermission ? "Listo en segundo plano" : "Permiso de pegado pendiente"))
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
@@ -557,7 +680,38 @@ struct PopoverView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            .padding(.bottom, 12)
+            .padding(.bottom, 10)
+
+            // Accessibility Warning Banner
+            if !state.hasAccessibilityPermission {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 14))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Requiere Permiso de Accesibilidad")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Necesario para pegar automáticamente en tu cursor.")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button("Dar Permiso") {
+                        state.checkAndPromptAccessibility()
+                    }
+                    .font(.system(size: 10, weight: .bold))
+                    .buttonStyle(BorderedProminentButtonStyle())
+                    .tint(.purple)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(8)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+            }
 
             // Tab Picker
             Picker("", selection: $state.selectedTab) {
@@ -789,7 +943,7 @@ struct HotkeyTabView: View {
                     Text("Cómo funciona:")
                         .font(.system(size: 11, weight: .bold))
                 }
-                Text("Mantén presionadas las teclas mientras hablas. Al soltarlas, Aurae transcribe, limpia muletillas y pega directamente en tu cursor.")
+                Text("Mantén presionadas las teclas mientras hablas. Al soltarlas, Aurae transcribe y pega automáticamente en donde tengas colocado el cursor.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -915,7 +1069,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Start global push-to-talk listener
         PushToTalkListener.shared.start()
-        print("🚀 Aurae MenuBar App lista en la barra superior.")
+        auraeLog("🚀 Aurae MenuBar App lista en la barra superior.")
     }
 
     @objc func togglePopover() {
@@ -923,9 +1077,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            AppState.shared.hasAccessibilityPermission = AXIsProcessTrusted()
             AppState.shared.loadHistory()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            NSApplication.shared.activate(ignoringOtherApps: true)
+            NSApp.activate()
         }
     }
 }
