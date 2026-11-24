@@ -4,6 +4,7 @@ import Carbon
 import QuartzCore
 import ApplicationServices
 import ServiceManagement
+import AVFoundation
 
 // MARK: - Logging
 
@@ -29,6 +30,11 @@ func auraeLog(_ message: String) {
 
 // MARK: - Models and Config
 
+struct AudioInputDevice: Identifiable, Hashable {
+    let id: String
+    let name: String
+}
+
 struct ConfigData: Codable {
     var model: String = "small"
     var language: String = "es"
@@ -37,9 +43,24 @@ struct ConfigData: Codable {
     var hotkey: String = "shift+option"
     var waveform_colors: [String] = ["#A855F7", "#EC4899", "#3B82F6", "#06B6D4"]
     var sound_effects: Bool = true
+    var audio_device: String = "default"
 
     enum CodingKeys: String, CodingKey {
-        case model, language, remove_fillers, auto_paste, hotkey, waveform_colors, sound_effects
+        case model, language, remove_fillers, auto_paste, hotkey, waveform_colors, sound_effects, audio_device
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.model = try container.decodeIfPresent(String.self, forKey: .model) ?? "small"
+        self.language = try container.decodeIfPresent(String.self, forKey: .language) ?? "es"
+        self.remove_fillers = try container.decodeIfPresent(Bool.self, forKey: .remove_fillers) ?? true
+        self.auto_paste = try container.decodeIfPresent(Bool.self, forKey: .auto_paste) ?? true
+        self.hotkey = try container.decodeIfPresent(String.self, forKey: .hotkey) ?? "shift+option"
+        self.waveform_colors = try container.decodeIfPresent([String].self, forKey: .waveform_colors) ?? ["#A855F7", "#EC4899", "#3B82F6", "#06B6D4"]
+        self.sound_effects = try container.decodeIfPresent(Bool.self, forKey: .sound_effects) ?? true
+        self.audio_device = try container.decodeIfPresent(String.self, forKey: .audio_device) ?? "default"
     }
 }
 
@@ -100,6 +121,7 @@ class AppState: ObservableObject {
     @Published var dictionarySearchText: String = ""
     @Published var newDictionaryWord: String = ""
     @Published var newDictionaryReplacement: String = ""
+    @Published var audioDevices: [AudioInputDevice] = [AudioInputDevice(id: "default", name: "Predeterminado del Sistema")]
 
     var filteredDictionary: [DictionaryEntry] {
         if dictionarySearchText.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -127,8 +149,30 @@ class AppState: ObservableObject {
         loadConfig()
         loadHistory()
         loadDictionary()
+        refreshAudioDevices()
         startPermissionWatcher()
         checkLaunchAtLoginStatus()
+    }
+
+    func refreshAudioDevices() {
+        var list: [AudioInputDevice] = [AudioInputDevice(id: "default", name: "Predeterminado del Sistema")]
+        let types: [AVCaptureDevice.DeviceType]
+        if #available(macOS 14.0, *) {
+            types = [.microphone, .external]
+        } else {
+            types = [.builtInMicrophone, .externalUnknown]
+        }
+        let session = AVCaptureDevice.DiscoverySession(
+            deviceTypes: types,
+            mediaType: .audio,
+            position: .unspecified
+        )
+        for dev in session.devices {
+            if !list.contains(where: { $0.id == dev.localizedName }) {
+                list.append(AudioInputDevice(id: dev.localizedName, name: dev.localizedName))
+            }
+        }
+        self.audioDevices = list
     }
 
     func checkLaunchAtLoginStatus() {
@@ -608,8 +652,16 @@ class PushToTalkListener {
         try? FileManager.default.removeItem(atPath: audioPath)
 
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/rec")
-        p.arguments = ["-q", "-c", "1", "-r", "16000", audioPath]
+        p.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/sox")
+        
+        let selectedDevice = AppState.shared.config.audio_device
+        if selectedDevice != "default" && AppState.shared.audioDevices.contains(where: { $0.id == selectedDevice }) {
+            p.arguments = ["-q", "-t", "coreaudio", selectedDevice, "-c", "1", "-r", "16000", audioPath]
+            auraeLog("[PTT] Grabando con micrófono seleccionado: \"\(selectedDevice)\"")
+        } else {
+            p.arguments = ["-q", "-d", "-c", "1", "-r", "16000", audioPath]
+            auraeLog("[PTT] Grabando con micrófono predeterminado (-d)")
+        }
         try? p.run()
         self.recProcess = p
     }
@@ -1352,6 +1404,61 @@ struct SettingsTabView: View {
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
 
+                // Audio Input Microphone Card
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        ZStack {
+                            Circle()
+                                .fill(Color.teal.opacity(0.15))
+                                .frame(width: 32, height: 32)
+                            Image(systemName: "mic.fill")
+                                .foregroundColor(.teal)
+                                .font(.system(size: 14))
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Micrófono de entrada")
+                                .font(.system(size: 13, weight: .medium))
+                            Text(state.config.audio_device == "default" ? "Predeterminado de macOS" : state.config.audio_device)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        Button(action: { state.refreshAudioDevices() }) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(BorderlessButtonStyle())
+                        .help("Actualizar lista de micrófonos")
+                    }
+
+                    Picker("", selection: Binding(
+                        get: { state.config.audio_device },
+                        set: { val in
+                            state.config.audio_device = val
+                            state.saveConfig()
+                            auraeLog("[Audio] Dispositivo de entrada seleccionado: \(val)")
+                        }
+                    )) {
+                        ForEach(state.audioDevices) { dev in
+                            Text(dev.name).tag(dev.id)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .labelsHidden()
+                }
+                .padding(12)
+                .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
                 // Waveform Themes Card
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
@@ -1474,6 +1581,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             AppState.shared.hasAccessibilityPermission = AXIsProcessTrusted()
             AppState.shared.loadHistory()
+            AppState.shared.refreshAudioDevices()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate()
         }

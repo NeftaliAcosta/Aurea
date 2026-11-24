@@ -13,6 +13,8 @@ type Config struct {
 	AutoPaste      bool     `json:"auto_paste"`      // true
 	Hotkey         string   `json:"hotkey"`          // e.g. "shift+option"
 	WaveformColors []string `json:"waveform_colors"` // hex colors for 4 waveform bars
+	SoundEffects   bool     `json:"sound_effects"`   // true
+	AudioDevice    string   `json:"audio_device"`    // e.g. "default"
 	ModelsDir      string   `json:"models_dir"`      // path to models directory
 }
 
@@ -31,7 +33,9 @@ func DefaultConfig() *Config {
 			"#3B82F6", // Blue
 			"#06B6D4", // Cyan
 		},
-		ModelsDir: modelsDir,
+		SoundEffects: true,
+		AudioDevice:  "default",
+		ModelsDir:    modelsDir,
 	}
 }
 
