@@ -14,7 +14,7 @@ build:
 	@swiftc -O -o $(BIN_DIR)/aurae-listener cmd/listener/main.swift
 	@cp cmd/app/Info.plist $(APP_BUNDLE)/Contents/Info.plist
 	@cp cmd/app/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
-	@swiftc -O -framework Cocoa -framework SwiftUI -framework Carbon -framework QuartzCore cmd/app/main.swift -o $(APP_BUNDLE)/Contents/MacOS/Aurae
+	@swiftc -O -framework Cocoa -framework SwiftUI -framework Carbon -framework QuartzCore -framework ServiceManagement cmd/app/main.swift -o $(APP_BUNDLE)/Contents/MacOS/Aurae
 	@codesign --force --deep -s - --requirements '=designated => identifier "com.neftaliacosta.aurae"' $(APP_BUNDLE)
 	@echo "✅ Binarios generados y firmados en $(BIN_DIR)/$(APP_NAME) y $(APP_BUNDLE)"
 

@@ -3,6 +3,7 @@ import SwiftUI
 import Carbon
 import QuartzCore
 import ApplicationServices
+import ServiceManagement
 
 // MARK: - Logging
 
@@ -82,6 +83,7 @@ class AppState: ObservableObject {
     @Published var selectedTab = 0
     @Published var isListening = false
     @Published var hasAccessibilityPermission: Bool = AXIsProcessTrusted()
+    @Published var launchAtLogin: Bool = false
     @Published var copiedId: String? = nil
     @Published var searchText: String = ""
 
@@ -99,6 +101,34 @@ class AppState: ObservableObject {
         loadConfig()
         loadHistory()
         startPermissionWatcher()
+        checkLaunchAtLoginStatus()
+    }
+
+    func checkLaunchAtLoginStatus() {
+        if #available(macOS 13.0, *) {
+            self.launchAtLogin = (SMAppService.mainApp.status == .enabled)
+        }
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        if #available(macOS 13.0, *) {
+            do {
+                if enabled {
+                    if SMAppService.mainApp.status != .enabled {
+                        try SMAppService.mainApp.register()
+                    }
+                } else {
+                    if SMAppService.mainApp.status == .enabled {
+                        try SMAppService.mainApp.unregister()
+                    }
+                }
+                self.launchAtLogin = (SMAppService.mainApp.status == .enabled)
+                auraeLog("[Auto-Launch] Inicio con macOS actualizado a: \(self.launchAtLogin)")
+            } catch {
+                auraeLog("[Auto-Launch] Error al cambiar estado: \(error)")
+                self.launchAtLogin = (SMAppService.mainApp.status == .enabled)
+            }
+        }
     }
 
     func startPermissionWatcher() {
@@ -1127,6 +1157,44 @@ struct SettingsTabView: View {
                             state.config.sound_effects = val
                             state.saveConfig()
                         }
+                    ))
+                    .toggleStyle(SwitchToggleStyle(tint: .purple))
+                    .labelsHidden()
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+
+            // Auto-Launch at Login Card
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    ZStack {
+                        Circle()
+                            .fill(Color.blue.opacity(0.15))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: "macwindow.and.cursorarrow")
+                            .foregroundColor(.blue)
+                            .font(.system(size: 14))
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Iniciar con macOS")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(state.launchAtLogin ? "Listo para iniciar al encender el equipo" : "Desactivado (inicio manual)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: Binding(
+                        get: { state.launchAtLogin },
+                        set: { state.setLaunchAtLogin($0) }
                     ))
                     .toggleStyle(SwitchToggleStyle(tint: .purple))
                     .labelsHidden()
