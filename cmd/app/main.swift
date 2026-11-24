@@ -356,6 +356,44 @@ class HUDOverlay {
     }
 }
 
+// MARK: - Pasteboard Helper
+
+struct PasteboardSnapshot {
+    let items: [[NSPasteboard.PasteboardType: Data]]
+
+    static func capture(from pb: NSPasteboard = .general) -> PasteboardSnapshot {
+        var result: [[NSPasteboard.PasteboardType: Data]] = []
+        if let pbItems = pb.pasteboardItems {
+            for item in pbItems {
+                var dict: [NSPasteboard.PasteboardType: Data] = [:]
+                for type in item.types {
+                    if let data = item.data(forType: type) {
+                        dict[type] = data
+                    }
+                }
+                if !dict.isEmpty {
+                    result.append(dict)
+                }
+            }
+        }
+        return PasteboardSnapshot(items: result)
+    }
+
+    func restore(to pb: NSPasteboard = .general) {
+        guard !items.isEmpty else { return }
+        pb.clearContents()
+        var newItems: [NSPasteboardItem] = []
+        for dict in items {
+            let item = NSPasteboardItem()
+            for (type, data) in dict {
+                item.setData(data, forType: type)
+            }
+            newItems.append(item)
+        }
+        pb.writeObjects(newItems)
+    }
+}
+
 // MARK: - Global Listener & Keystroke Injection
 
 class PushToTalkListener {
@@ -551,11 +589,12 @@ class PushToTalkListener {
         auraeLog("[Inyector] Iniciando pegado para texto: \"\(text)\"")
         
         let pb = NSPasteboard.general
-        let oldString = pb.string(forType: .string)
+        let snapshot = PasteboardSnapshot.capture(from: pb)
 
         // 1. Put transcribed text into clipboard
         pb.clearContents()
         pb.setString(text, forType: .string)
+        let auraeChangeCount = pb.changeCount
 
         // 2. Wait until physical modifier keys are completely released
         var retries = 0
@@ -613,12 +652,11 @@ class PushToTalkListener {
             auraeLog("[Inyector] ✅ Evento Cmd+V emitido limpiamente a cgSessionEventTap")
         }
 
-        // 5. Restore previous clipboard after 2.5 seconds
-        if let old = oldString, !old.isEmpty && old != text {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(old, forType: .string)
-                auraeLog("[Inyector] Portapapeles anterior restaurado.")
+        // 5. Restore previous clipboard rapidly (350ms) so user's clipboard is immediately available
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.35) {
+            if NSPasteboard.general.changeCount == auraeChangeCount {
+                snapshot.restore(to: NSPasteboard.general)
+                auraeLog("[Inyector] Portapapeles original restaurado fielmente (350ms).")
             }
         }
     }
