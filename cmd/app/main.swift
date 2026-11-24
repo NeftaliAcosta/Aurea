@@ -444,11 +444,17 @@ class PushToTalkListener {
         guard !isRecording else { return }
         isRecording = true
         
-        // Capture the active application window BEFORE showing HUD
-        self.targetApp = NSWorkspace.shared.frontmostApplication
+        // Capture the active application window BEFORE showing HUD (ignore Aurae itself)
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.bundleIdentifier != Bundle.main.bundleIdentifier {
+            self.targetApp = front
+        }
         auraeLog("[PTT] Grabación iniciada. App destino: \(self.targetApp?.localizedName ?? "Desconocida") (PID: \(self.targetApp?.processIdentifier ?? 0))")
 
-        DispatchQueue.main.async { AppState.shared.isListening = true }
+        DispatchQueue.main.async {
+            (NSApp.delegate as? AppDelegate)?.popover.performClose(nil)
+            AppState.shared.isListening = true
+        }
 
         hud.showListening()
         try? FileManager.default.removeItem(atPath: audioPath)
@@ -586,64 +592,28 @@ class PushToTalkListener {
             }
         }
 
-        // 4. Layer 1: Direct insertion via Accessibility API (cleanest, doesn't touch clipboard)
-        var insertedViaAX = false
-        if isTrusted, let app = targetApp {
-            let appElement = AXUIElementCreateApplication(app.processIdentifier)
-            var focusedElement: CFTypeRef?
-            if AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success,
-               let elem = focusedElement {
-                let axElement = elem as! AXUIElement
-                let setRes = AXUIElementSetAttributeValue(axElement, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
-                if setRes == .success {
-                    insertedViaAX = true
-                    auraeLog("[Inyector] ✅ Inserción directa exitosa vía AXUIElement (kAXSelectedTextAttribute)")
-                } else {
-                    auraeLog("[Inyector] AXUIElement kAXSelectedTextAttribute retornó: \(setRes.rawValue), probando Cmd+V...")
-                }
-            }
+        // 4. Inject single clean Cmd+V keystroke directly to session event tap
+        let src = CGEventSource(stateID: .hidSystemState)
+        if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: true),
+           let vDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
+           let vUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false),
+           let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false) {
+            cmdDown.flags = .maskCommand
+            vDown.flags = .maskCommand
+            vUp.flags = .maskCommand
+            cmdUp.flags = []
+
+            cmdDown.post(tap: .cgSessionEventTap)
+            usleep(15000)
+            vDown.post(tap: .cgSessionEventTap)
+            usleep(35000)
+            vUp.post(tap: .cgSessionEventTap)
+            usleep(15000)
+            cmdUp.post(tap: .cgSessionEventTap)
+            auraeLog("[Inyector] ✅ Evento Cmd+V emitido limpiamente a cgSessionEventTap")
         }
 
-        // 5. Layer 2: Universal AppleScript Keystroke (dispatched by macOS System Events to active app)
-        if !insertedViaAX {
-            var appleScriptSucceeded = false
-            let script = "tell application \"System Events\" to keystroke \"v\" using command down"
-            var err: NSDictionary?
-            if let appleScript = NSAppleScript(source: script) {
-                appleScript.executeAndReturnError(&err)
-                if err == nil {
-                    appleScriptSucceeded = true
-                    auraeLog("[Inyector] ✅ Pegado exitoso con AppleScript (1 sola vez)")
-                } else {
-                    auraeLog("[Inyector] AppleScript error: \(err!), probando CGEvent session tap...")
-                }
-            }
-
-            // Fallback ONLY if AppleScript failed
-            if !appleScriptSucceeded {
-                let src = CGEventSource(stateID: .hidSystemState)
-                if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: true),
-                   let vDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
-                   let vUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false),
-                   let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false) {
-                    cmdDown.flags = .maskCommand
-                    vDown.flags = .maskCommand
-                    vUp.flags = .maskCommand
-                    cmdUp.flags = []
-
-                    cmdDown.post(tap: .cgSessionEventTap)
-                    usleep(15000)
-                    vDown.post(tap: .cgSessionEventTap)
-                    usleep(35000)
-                    vUp.post(tap: .cgSessionEventTap)
-                    usleep(15000)
-                    cmdUp.post(tap: .cgSessionEventTap)
-                    auraeLog("[Inyector] ✅ Fallback CGEvent emitido a cgSessionEventTap")
-                }
-            }
-        }
-
-        // 7. Restore previous clipboard after 2.5 seconds
+        // 5. Restore previous clipboard after 2.5 seconds
         if let old = oldString, !old.isEmpty && old != text {
             DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
                 NSPasteboard.general.clearContents()
