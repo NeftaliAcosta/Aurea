@@ -758,7 +758,7 @@ struct PopoverView: View {
                         .foregroundColor(.secondary)
 
                     Button(action: {
-                        if let url = URL(string: "https://github.com/neftaliacosta/aurae") {
+                        if let url = URL(string: "https://github.com/NeftaliAcosta/Aurea") {
                             NSWorkspace.shared.open(url)
                         }
                     }) {
