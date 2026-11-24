@@ -35,9 +35,10 @@ struct ConfigData: Codable {
     var auto_paste: Bool = true
     var hotkey: String = "shift+option"
     var waveform_colors: [String] = ["#A855F7", "#EC4899", "#3B82F6", "#06B6D4"]
+    var sound_effects: Bool = true
 
     enum CodingKeys: String, CodingKey {
-        case model, language, remove_fillers, auto_paste, hotkey, waveform_colors
+        case model, language, remove_fillers, auto_paste, hotkey, waveform_colors, sound_effects
     }
 }
 
@@ -289,7 +290,9 @@ class HUDOverlay {
             guard let self = self, let window = self.window else { return }
             self.reposition()
             self.updateColors()
-            NSSound(named: "Pop")?.play()
+            if AppState.shared.config.sound_effects {
+                NSSound(named: "Pop")?.play()
+            }
 
             for (i, bar) in self.waveBars.enumerated() {
                 bar.removeAllAnimations()
@@ -314,7 +317,9 @@ class HUDOverlay {
     func showProcessing() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            NSSound(named: "Tink")?.play()
+            if AppState.shared.config.sound_effects {
+                NSSound(named: "Tink")?.play()
+            }
 
             for bar in self.waveBars {
                 bar.removeAllAnimations()
@@ -728,7 +733,8 @@ struct PopoverView: View {
             Picker("", selection: $state.selectedTab) {
                 Text("Historial").tag(0)
                 Text("Atajo").tag(1)
-                Text("Colores").tag(2)
+                Text("Estilo").tag(2)
+                Text("Ajustes").tag(3)
             }
             .pickerStyle(SegmentedPickerStyle())
             .padding(.horizontal, 16)
@@ -742,8 +748,10 @@ struct PopoverView: View {
                     HistoryTabView()
                 } else if state.selectedTab == 1 {
                     HotkeyTabView()
-                } else {
+                } else if state.selectedTab == 2 {
                     AppearanceTabView()
+                } else {
+                    SettingsTabView()
                 }
             }
             .frame(maxHeight: .infinity)
@@ -790,7 +798,7 @@ struct PopoverView: View {
             .padding(.vertical, 8)
             .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
         }
-        .frame(width: 370, height: 500)
+        .frame(width: 410, height: 540)
     }
 }
 
@@ -1079,6 +1087,83 @@ struct AppearanceTabView: View {
     }
 }
 
+// MARK: - Tab 4: Settings View (Modo Discreto, etc.)
+
+struct SettingsTabView: View {
+    @ObservedObject var state = AppState.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Preferencias del Sistema")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+                .padding(.top, 12)
+
+            // Sound Effects Card
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    ZStack {
+                        Circle()
+                            .fill(Color.purple.opacity(0.15))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: state.config.sound_effects ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                            .foregroundColor(.purple)
+                            .font(.system(size: 14))
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Sonidos de confirmación")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(state.config.sound_effects ? "Sonidos Pop y Tink activos" : "Modo Discreto (silencioso)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: Binding(
+                        get: { state.config.sound_effects },
+                        set: { val in
+                            state.config.sound_effects = val
+                            state.saveConfig()
+                        }
+                    ))
+                    .toggleStyle(SwitchToggleStyle(tint: .purple))
+                    .labelsHidden()
+                }
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
+
+            // Info Card
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "lock.shield.fill")
+                        .foregroundColor(.green)
+                        .font(.system(size: 12))
+                    Text("Privacidad y Rendimiento Local")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                Text("Todo el procesamiento de voz ocurre exclusivamente en tu Mac mediante whisper.cpp con aceleración por hardware Metal GPU. Ningún dato sale de tu equipo.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .background(Color.green.opacity(0.07))
+            .cornerRadius(10)
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+    }
+}
+
 // MARK: - App Delegate & Menu Bar Setup
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -1096,7 +1181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Set up Popover
         let popover = NSPopover()
-        popover.contentSize = NSSize(width: 370, height: 500)
+        popover.contentSize = NSSize(width: 410, height: 540)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: PopoverView())
         self.popover = popover
