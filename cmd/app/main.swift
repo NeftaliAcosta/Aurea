@@ -604,22 +604,42 @@ class PushToTalkListener {
             }
         }
 
-        // 5. Layer 2: CoreGraphics Cmd+V Simulation (Single Clean Keystroke)
+        // 5. Layer 2: Universal AppleScript Keystroke (dispatched by macOS System Events to active app)
         if !insertedViaAX {
-            let source = CGEventSource(stateID: .combinedSessionState)
-            source?.setLocalEventsFilterDuringSuppressionState([.permitLocalMouseEvents, .permitLocalKeyboardEvents], state: .eventSuppressionStateSuppressionInterval)
+            var appleScriptSucceeded = false
+            let script = "tell application \"System Events\" to keystroke \"v\" using command down"
+            var err: NSDictionary?
+            if let appleScript = NSAppleScript(source: script) {
+                appleScript.executeAndReturnError(&err)
+                if err == nil {
+                    appleScriptSucceeded = true
+                    auraeLog("[Inyector] ✅ Pegado exitoso con AppleScript (1 sola vez)")
+                } else {
+                    auraeLog("[Inyector] AppleScript error: \(err!), probando CGEvent session tap...")
+                }
+            }
 
-            // Virtual key 9 = ANSI 'v'
-            if let vDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-               let vUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) {
-                vDown.flags = .maskCommand
-                vUp.flags = .maskCommand
+            // Fallback ONLY if AppleScript failed
+            if !appleScriptSucceeded {
+                let src = CGEventSource(stateID: .hidSystemState)
+                if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: true),
+                   let vDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
+                   let vUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false),
+                   let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: 55, keyDown: false) {
+                    cmdDown.flags = .maskCommand
+                    vDown.flags = .maskCommand
+                    vUp.flags = .maskCommand
+                    cmdUp.flags = []
 
-                // Post to annotated session tap (preferred by modern macOS)
-                vDown.post(tap: .cgAnnotatedSessionEventTap)
-                usleep(30000) // 30ms hold
-                vUp.post(tap: .cgAnnotatedSessionEventTap)
-                auraeLog("[Inyector] ✅ Evento Cmd+V emitido a cgAnnotatedSessionEventTap")
+                    cmdDown.post(tap: .cgSessionEventTap)
+                    usleep(15000)
+                    vDown.post(tap: .cgSessionEventTap)
+                    usleep(35000)
+                    vUp.post(tap: .cgSessionEventTap)
+                    usleep(15000)
+                    cmdUp.post(tap: .cgSessionEventTap)
+                    auraeLog("[Inyector] ✅ Fallback CGEvent emitido a cgSessionEventTap")
+                }
             }
         }
 
