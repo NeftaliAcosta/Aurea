@@ -348,8 +348,8 @@ class HUDOverlay {
     var waveBars: [CALayer] = []
     let barWidth: CGFloat = 3.5
     let barSpacing: CGFloat = 4.0
-    let baseHeights: [CGFloat] = [6, 10, 8, 5]
-    let maxHeights: [CGFloat] = [18, 22, 19, 15]
+    let baseHeights: [CGFloat] = [4, 7, 5, 4]
+    let maxHeights: [CGFloat] = [20, 26, 22, 17]
 
     private var meterTimer: DispatchSourceTimer?
     private var smoothedLevel: Double = 0.0
@@ -477,7 +477,7 @@ class HUDOverlay {
         smoothedLevel = 0.0
 
         let timer = DispatchSource.makeTimerSource(queue: meterQueue)
-        timer.schedule(deadline: .now() + 0.05, repeating: 0.035) // ~28 fps for smooth live waves
+        timer.schedule(deadline: .now() + 0.04, repeating: 0.025) // 40 fps for ultra-smooth responsiveness
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
 
@@ -506,13 +506,19 @@ class HUDOverlay {
             }
             let rms = sqrt(sumSq / Double(sampleCount))
 
-            // Map RMS amplitude: noise floor ~0.003, normal voice range up to ~0.14
-            let normalized = max(0.0, min(1.0, (rms - 0.003) / 0.12))
-            // Fast attack, gentle decay
-            let alpha = normalized > self.smoothedLevel ? 0.45 : 0.20
-            self.smoothedLevel = self.smoothedLevel * (1.0 - alpha) + normalized * alpha
+            // Highly sensitive non-linear mapping:
+            // Noise floor: 0.0008, voice saturation point: 0.040
+            let noiseFloor: Double = 0.0008
+            let maxVoiceRange: Double = 0.040
+            let rawNormalized = max(0.0, min(1.0, (rms - noiseFloor) / maxVoiceRange))
+            // Square root curve expands soft and normal voice so waves dance vigorously
+            let targetLevel = sqrt(rawNormalized)
 
-            let factors: [CGFloat] = [0.70, 1.0, 0.85, 0.65]
+            // Fast attack (0.60) for immediate syllable response, smooth decay (0.22)
+            let alpha = targetLevel > self.smoothedLevel ? 0.60 : 0.22
+            self.smoothedLevel = self.smoothedLevel * (1.0 - alpha) + targetLevel * alpha
+
+            let factors: [CGFloat] = [0.85, 1.0, 0.90, 0.75]
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 CATransaction.begin()
