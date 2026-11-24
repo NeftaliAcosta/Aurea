@@ -25,3 +25,4 @@ test
 test.*
 .github/context-mode/
 .codegraph/
+DECISIONS.md
