@@ -752,10 +752,33 @@ struct PopoverView: View {
 
             // Footer
             HStack {
-                Text("Aurae v0.1.0 • 100% Local")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Aurae v0.1.0 • 100% Local")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+
+                    Button(action: {
+                        if let url = URL(string: "https://github.com/neftaliacosta/aurae") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }) {
+                        HStack(spacing: 3) {
+                            Text("por")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                            Text("Neftali Acosta")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.purple)
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 8))
+                                .foregroundColor(.purple.opacity(0.8))
+                        }
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
                 Spacer()
+
                 Button("Salir") {
                     NSApplication.shared.terminate(nil)
                 }
@@ -764,10 +787,10 @@ struct PopoverView: View {
                 .foregroundColor(.red.opacity(0.8))
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
             .background(Color(NSColor.windowBackgroundColor).opacity(0.5))
         }
-        .frame(width: 370, height: 490)
+        .frame(width: 370, height: 500)
     }
 }
 
@@ -1073,7 +1096,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Set up Popover
         let popover = NSPopover()
-        popover.contentSize = NSSize(width: 370, height: 490)
+        popover.contentSize = NSSize(width: 370, height: 500)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: PopoverView())
         self.popover = popover
