@@ -1,133 +1,135 @@
 # 🎙️ Aurae
 
-> **Dictado por voz inteligente, 100% local, privado y nativo para macOS.**  
-> Transcribe voz en tiempo real directamente en la posición de tu cursor, limpia muletillas automáticamente y preserva tu portapapeles intacto. Sin suscripciones, sin APIs de terceros y sin enviar audio a internet.
+**English** | [Español](README.es.md)
+
+> **Intelligent, 100% local, private, and native voice dictation for macOS.**  
+> Transcribe speech in real-time directly at your cursor position, automatically remove filler words, and keep your clipboard history intact. No subscriptions, no third-party APIs, and zero audio sent over the internet.
 
 ---
 
-## ⚡ Características Principales
+## ⚡ Key Features
 
-- **Privacidad Total (Zero Cloud):** Todo el procesamiento ocurre en local mediante `whisper.cpp` acelerado por hardware con Metal GPU. Cero telemetría y cero conexiones salientes.
-- **App Nativa en Barra de Menú (`Aurae.app`):** Panel desplegable accesible desde el icono superior junto al reloj de macOS.
-- **Píldora Flotante con Ondas Reactivas (RMS en vivo):** Mientras mantienes pulsado el atajo, aparece un HUD flotante cuyas ondas bioluminiscentes responden dinámicamente al volumen y cadencia de tu voz a 40 FPS.
-- **Preservación Fiel del Portapapeles:** Dicta cualquier texto sin perder lo que tenías copiado. Aurae toma una instantánea del portapapeles y lo restaura de forma transparente en milisegundos.
-- **Inyección por Eventos de Hardware:** Pega directamente en cualquier aplicación activa (VS Code, Chrome, Slack, Notes, Terminal, WhatsApp, Cursor) usando eventos CoreGraphics a nivel de sesión.
-- **Diccionario Personalizado:** Mapea términos técnicos, acrónimos o nombres propios con reemplazos regex insensibles a mayúsculas y buscador integrado.
-- **Selector de Entrada de Audio:** Elige entre el micrófono predeterminado del sistema o dispositivos específicos (micrófono integrado, AirPods, interfaces USB) con soporte para reconexión en caliente.
-- **Iniciar con macOS:** Configuración de arranque automático al iniciar sesión mediante el framework nativo `ServiceManagement`.
-- **Modo Discreto:** Alterna los efectos sonoros de confirmación (*Pop* y *Tink*) para trabajar en entornos silenciosos.
+- **Total Privacy (Zero Cloud):** All processing runs entirely on your Mac using `whisper.cpp` with Apple Silicon Metal GPU acceleration. Zero telemetry and no outgoing network requests.
+- **Native Menu Bar App (`Aurae.app`):** Sleek, lightweight status bar application accessible right beside the macOS system clock.
+- **Floating HUD with Volume-Reactive Waves (Live RMS):** While holding your push-to-talk shortcut, a floating pill appears with bioluminescent waves dynamically responding to your voice amplitude at 40 FPS.
+- **Zero-Loss Clipboard Preservation:** Dictate text without overwriting what you previously copied. Aurae captures a multi-type snapshot of your pasteboard and restores it transparently in milliseconds.
+- **Hardware-Level Event Injection:** Types directly into whatever app is currently focused (VS Code, Chrome, Slack, Notes, Terminal, WhatsApp, Cursor) using CoreGraphics session event taps.
+- **Custom Vocabulary Dictionary:** Map technical terms, acronyms, or names with case-insensitive regex boundary replacement and a real-time search interface.
+- **Audio Input Selector:** Switch between the macOS system default microphone or dedicated devices (built-in mic, AirPods, USB interfaces) with hot-plug discovery.
+- **Launch at Login:** Native autostart configuration via Apple's official `ServiceManagement` framework.
+- **Discreet Mode:** Toggle confirmation sound effects (*Pop* and *Tink*) on or off for quiet work environments.
 
 ---
 
-## 🖥️ Estructura del Panel de Control
+## 🖥️ Menu Bar Panel Overview
 
-La ventana emergente de Aurae incluye cuatro secciones:
+Clicking the wave icon in your menu bar opens a popover with four sections:
 
-1. **Historial:** Registro local de transcripciones con buscador en vivo y botón para copiar con un solo clic.
-2. **Diccionario:** Administrador de reglas de sustitución con buscador instantáneo y altas/bajas de términos.
-3. **Atajo (Push-to-Talk):** Selector de combinación de teclas para mantener mientras hablas:
-   - `Shift + Option` (Recomendado)
-   - `Option + Barra Espaciadora`
-   - `Control + Barra Espaciadora`
+1. **History:** Searchable log of past transcriptions with one-click copy and visual confirmation feedback.
+2. **Dictionary:** Vocabulary replacement engine with instant filtering and quick rule creation/deletion.
+3. **Shortcut (Push-to-Talk):** Select your preferred trigger keys:
+   - `Shift + Option` (Recommended)
+   - `Option + Space`
+   - `Control + Space`
    - `Control + Option`
-4. **Ajustes:**
-   - Selector de micrófono de entrada con botón de refresco.
-   - Interruptor de sonidos de confirmación (Modo Discreto).
-   - Interruptor de inicio con macOS.
-   - Selector de paletas visuales para las ondas (*Cyberpunk*, *Siri*, *Sunset*, *Emerald*, *Monocromo*).
-   - Información de autoría, contacto, soporte y licencia.
+4. **Settings:**
+   - Microphone selector with refresh button.
+   - Confirmation sound effects toggle (Discreet Mode).
+   - Launch at macOS login toggle.
+   - Waveform color theme picker (*Cyberpunk*, *Siri*, *Sunset*, *Emerald*, *Monochrome*).
+   - Legal, author credits, and bug reporting links.
 
 ---
 
-## 🛠️ Requisitos del Sistema
+## 🛠️ System Requirements
 
-- **Sistema Operativo:** macOS 13.0 (Ventura) o superior (probado en Sonoma y Sequoia).
-- **Arquitectura:** Apple Silicon (M1/M2/M3/M4) para aceleración Metal GPU.
-- **Dependencias:**
+- **Operating System:** macOS 13.0 (Ventura) or later (fully tested on macOS Sonoma and Sequoia).
+- **Architecture:** Apple Silicon (M1/M2/M3/M4) for Metal GPU acceleration.
+- **Dependencies:**
   ```bash
   brew install whisper-cpp sox
   ```
 
 ---
 
-## 🚀 Instalación y Compilación
+## 🚀 Building and Installation
 
-### Compilación desde código fuente
+### Build from Source
 
 ```bash
-# 1. Clonar el repositorio
+# 1. Clone the repository
 git clone https://github.com/NeftaliAcosta/Aurea.git
 cd Aurea
 
-# 2. Compilar el motor y la aplicación nativa
+# 2. Compile both the Go engine and native Swift application
 make build
 
-# 3. Instalar Aurae.app en /Applications y CLI en /usr/local/bin
+# 3. Install Aurae.app into /Applications and CLI into /usr/local/bin
 make install
 
-# 4. Abrir la aplicación
+# 4. Launch the application
 open /Applications/Aurae.app
 ```
 
-### Permisos del Sistema
-En el primer arranque, macOS solicitará permiso de **Accesibilidad** (`Privacidad y Seguridad -> Accesibilidad`) para permitir la inyección de texto en el cursor mediante simulación de eventos de teclado.
+### System Permissions
+On first launch, macOS will request **Accessibility** permission (`System Settings -> Privacy & Security -> Accessibility`) to enable cursor text injection via simulated keyboard events.
 
 ---
 
-## 📖 Flujo de Uso
+## 📖 How to Use
 
-1. Inicia `Aurae.app` (aparecerá en la barra superior de macOS).
-2. Coloca el cursor en cualquier campo de texto o editor.
-3. **Mantén presionado el atajo** (por defecto `Shift + Option`) y habla normalmente.
-4. **Suelta las teclas:** Las ondas cambiarán a modo de procesamiento y tu texto aparecerá escrito donde esté el cursor.
+1. Start `Aurae.app` (it will sit quietly in your top menu bar).
+2. Focus any text field or editor.
+3. **Hold down your shortcut** (default: `Shift + Option`) and speak naturally.
+4. **Release the keys:** The waves pulse as Whisper transcribes locally (~0.5s), and your text is typed right at your cursor.
 
 ---
 
-## 🏗️ Arquitectura del Software
+## 🏗️ Software Architecture
 
 ```
 ┌────────────────────────────────────────────────────────┐
 │                   Aurae.app (Swift)                    │
-│  - NSStatusItem (Barra de menú nativa de macOS)        │
-│  - Popover SwiftUI (Historial, Diccionario, Ajustes)   │
+│  - NSStatusItem (macOS Menu Bar App)                   │
+│  - SwiftUI Popover (History, Dictionary, Settings)     │
 │  - Global Hardware EventTap (Push-to-Talk)             │
-│  - HUD Flotante (CALayer + RMS en tiempo real a 40fps) │
-│  - Inyector CoreGraphics (kCGSessionEventTap)          │
+│  - Floating Pill HUD (CALayer + 40 FPS real-time RMS)  │
+│  - CoreGraphics Keystroke Injector (kCGSessionEventTap)│
 └──────────────────────────┬─────────────────────────────┘
-                           │ Ejecuta
+                           │ Executes
 ┌──────────────────────────▼─────────────────────────────┐
 │                 aurae-engine (Go Core)                 │
-│  - internal/audio: Captura WAV mono 16kHz              │
-│  - internal/engine: Motor de inferencia whisper.cpp    │
-│  - internal/cleaner: Filtro de muletillas y formato    │
-│  - internal/history: Persistencia de historial JSONL   │
-│  - internal/config: Gestión de ~/.aurae/config.json    │
+│  - internal/audio: 16kHz mono WAV capture              │
+│  - internal/engine: whisper.cpp Metal inference runner │
+│  - internal/cleaner: Filler removal & voice formatting │
+│  - internal/history: JSONL transcription persistence   │
+│  - internal/config: ~/.aurae/config.json manager       │
 └────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🧪 Validación y Pruebas
+## 🧪 Validation and Testing
 
 ```bash
-# Ejecutar suite de pruebas unitarias
+# Run unit test suite
 make test
 
-# Diagnóstico de herramientas del sistema
+# Run system diagnostic doctor
 bin/aurae doctor
 ```
 
 ---
 
-## 👤 Autor y Contacto
+## 👤 Author and Contact
 
-- **Autor:** Neftali Acosta
-- **Contacto:** [neftaliacosta@protonmail.com](mailto:neftaliacosta@protonmail.com)
-- **Repositorio:** [github.com/NeftaliAcosta/Aurea](https://github.com/NeftaliAcosta/Aurea)
-- **Reporte de incidencias:** [github.com/NeftaliAcosta/Aurea/issues](https://github.com/NeftaliAcosta/Aurea/issues)
+- **Author:** Neftali Acosta
+- **Contact:** [neftaliacosta@protonmail.com](mailto:neftaliacosta@protonmail.com)
+- **Repository:** [github.com/NeftaliAcosta/Aurea](https://github.com/NeftaliAcosta/Aurea)
+- **Issue Tracker:** [github.com/NeftaliAcosta/Aurea/issues](https://github.com/NeftaliAcosta/Aurea/issues)
 
 ---
 
-## 📄 Licencia
+## 📄 License
 
-Distribuido bajo la Licencia MIT. Consulta el archivo `LICENSE` para detalles.
+Distributed under the MIT License. See `LICENSE` for details.

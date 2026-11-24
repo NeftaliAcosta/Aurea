@@ -15,7 +15,9 @@ build:
 	@cp cmd/app/Info.plist $(APP_BUNDLE)/Contents/Info.plist
 	@cp cmd/app/AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
 	@swiftc -O -framework Cocoa -framework SwiftUI -framework Carbon -framework QuartzCore -framework ServiceManagement cmd/app/main.swift -o $(APP_BUNDLE)/Contents/MacOS/Aurae
-	@codesign --force --deep -s - --requirements '=designated => identifier "com.neftaliacosta.aurae"' $(APP_BUNDLE)
+	@codesign --force -s - $(APP_BUNDLE)/Contents/MacOS/aurae-engine
+	@codesign --force -s - $(APP_BUNDLE)/Contents/MacOS/Aurae
+	@codesign --force -s - $(APP_BUNDLE)
 	@echo "✅ Binarios generados y firmados en $(BIN_DIR)/$(APP_NAME) y $(APP_BUNDLE)"
 
 test:
@@ -37,5 +39,7 @@ install: build
 	@echo "Instalando Aurae.app en /Applications..."
 	@rm -rf /Applications/Aurae.app
 	@cp -R $(APP_BUNDLE) /Applications/
-	@codesign --force --deep -s - --requirements '=designated => identifier "com.neftaliacosta.aurae"' /Applications/Aurae.app
+	@codesign --force -s - /Applications/Aurae.app/Contents/MacOS/aurae-engine
+	@codesign --force -s - /Applications/Aurae.app/Contents/MacOS/Aurae
+	@codesign --force -s - /Applications/Aurae.app
 	@echo "✅ Instalado en /Applications/Aurae.app"
