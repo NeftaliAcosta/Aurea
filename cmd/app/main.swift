@@ -1035,30 +1035,9 @@ struct PopoverView: View {
 
             // Footer
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Aurae v0.1.0 • 100% Local")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-
-                    Button(action: {
-                        if let url = URL(string: "https://github.com/NeftaliAcosta/Aurea") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }) {
-                        HStack(spacing: 3) {
-                            Text("por")
-                                .font(.system(size: 9))
-                                .foregroundColor(.secondary)
-                            Text("Neftali Acosta")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(.purple)
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 8))
-                                .foregroundColor(.purple.opacity(0.8))
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
+                Text("Aurae v0.2.0 • 100% Local")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
 
                 Spacer()
 
@@ -1640,23 +1619,120 @@ struct SettingsTabView: View {
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
 
-                // Info Card
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "lock.shield.fill")
-                            .foregroundColor(.green)
-                            .font(.system(size: 12))
-                        Text("Privacidad y Rendimiento Local")
-                            .font(.system(size: 11, weight: .bold))
+                // About & Legal Card
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        ZStack {
+                            Circle()
+                                .fill(Color.purple.opacity(0.15))
+                                .frame(width: 32, height: 32)
+                            Image(systemName: "info.circle.fill")
+                                .foregroundColor(.purple)
+                                .font(.system(size: 14))
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Acerca de Aurae")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("v0.2.0 • Licencia MIT (Open Source)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    Text("Todo el procesamiento de voz ocurre exclusivamente en tu Mac mediante whisper.cpp con aceleración por hardware Metal GPU. Ningún dato sale de tu equipo.")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Autor:")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Text("Neftali Acosta")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.primary)
+                        }
+
+                        HStack {
+                            Text("Contacto:")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.secondary)
+                            Button(action: {
+                                if let url = URL(string: "mailto:neftaliacosta@protonmail.com") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }) {
+                                HStack(spacing: 3) {
+                                    Text("neftaliacosta@protonmail.com")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.purple)
+                                    Image(systemName: "envelope.fill")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(.purple.opacity(0.8))
+                                }
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+
+                        Text("Privacidad y Términos:")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .padding(.top, 2)
+
+                        Text("100% Local y Offline. No se recopilan datos, no existe telemetría ni conexión a servidores externos. Todo el procesamiento de audio ocurre exclusivamente en tu Mac mediante whisper.cpp con aceleración por hardware Metal GPU.")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+                        .padding(.vertical, 2)
+
+                    // Action Links
+                    HStack(spacing: 8) {
+                        Button(action: {
+                            if let url = URL(string: "https://github.com/NeftaliAcosta/Aurea") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "curlybraces")
+                                    .font(.system(size: 10))
+                                Text("GitHub")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+
+                        Button(action: {
+                            if let url = URL(string: "https://github.com/NeftaliAcosta/Aurea/issues") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "ladybug.fill")
+                                    .font(.system(size: 10))
+                                Text("Reportar un Error")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
                 }
-                .padding(10)
-                .background(Color.green.opacity(0.07))
+                .padding(12)
+                .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                 .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
