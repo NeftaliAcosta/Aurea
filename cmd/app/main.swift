@@ -67,6 +67,16 @@ struct ColorTheme: Identifiable {
     let colors: [String]
 }
 
+struct DictionaryEntry: Identifiable, Codable {
+    var id: UUID = UUID()
+    var word: String
+    var replacement: String
+
+    enum CodingKeys: String, CodingKey {
+        case word, replacement
+    }
+}
+
 let predefinedThemes: [ColorTheme] = [
     ColorTheme(name: "Cyberpunk", colors: ["#A855F7", "#EC4899", "#3B82F6", "#06B6D4"]),
     ColorTheme(name: "Siri / Apple", colors: ["#6366F1", "#3B82F6", "#10B981", "#34D399"]),
@@ -80,15 +90,19 @@ class AppState: ObservableObject {
 
     @Published var config = ConfigData()
     @Published var history: [HistoryItem] = []
+    @Published var dictionary: [DictionaryEntry] = []
     @Published var selectedTab = 0
     @Published var isListening = false
     @Published var hasAccessibilityPermission: Bool = AXIsProcessTrusted()
     @Published var launchAtLogin: Bool = false
     @Published var copiedId: String? = nil
     @Published var searchText: String = ""
+    @Published var newDictionaryWord: String = ""
+    @Published var newDictionaryReplacement: String = ""
 
     let configURL: URL
     let historyURL: URL
+    let dictionaryURL: URL
     private var permTimer: Timer?
 
     init() {
@@ -97,9 +111,11 @@ class AppState: ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.configURL = dir.appendingPathComponent("config.json")
         self.historyURL = dir.appendingPathComponent("history.jsonl")
+        self.dictionaryURL = dir.appendingPathComponent("dictionary.json")
 
         loadConfig()
         loadHistory()
+        loadDictionary()
         startPermissionWatcher()
         checkLaunchAtLoginStatus()
     }
@@ -190,6 +206,54 @@ class AppState: ObservableObject {
     func clearHistory() {
         try? FileManager.default.removeItem(at: historyURL)
         self.history = []
+    }
+
+    func loadDictionary() {
+        guard let data = try? Data(contentsOf: dictionaryURL),
+              let decoded = try? JSONDecoder().decode([DictionaryEntry].self, from: data) else {
+            self.dictionary = [
+                DictionaryEntry(word: "aurea", replacement: "Aurae"),
+                DictionaryEntry(word: "nectalia costa", replacement: "Neftali Acosta")
+            ]
+            saveDictionary()
+            return
+        }
+        self.dictionary = decoded
+    }
+
+    func saveDictionary() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        if let data = try? encoder.encode(dictionary) {
+            try? data.write(to: dictionaryURL)
+        }
+    }
+
+    func addDictionaryEntry(word: String, replacement: String) {
+        let w = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        let r = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !w.isEmpty && !r.isEmpty else { return }
+        dictionary.append(DictionaryEntry(word: w, replacement: r))
+        saveDictionary()
+        auraeLog("[Diccionario] Regla agregada: \"\(w)\" -> \"\(r)\"")
+    }
+
+    func removeDictionaryEntry(id: UUID) {
+        dictionary.removeAll { $0.id == id }
+        saveDictionary()
+        auraeLog("[Diccionario] Regla eliminada.")
+    }
+
+    func applyDictionary(to text: String) -> String {
+        var result = text
+        for entry in dictionary {
+            let pattern = "(?i)\\b" + NSRegularExpression.escapedPattern(for: entry.word) + "\\b"
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                let range = NSRange(result.startIndex..., in: result)
+                result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: entry.replacement)
+            }
+        }
+        return result
     }
 
     func updateHotkey(_ newHotkey: String) {
@@ -603,7 +667,8 @@ class PushToTalkListener {
                 self.hud.hideImmediate()
 
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                if let rawText = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !rawText.isEmpty {
+                    let text = AppState.shared.applyDictionary(to: rawText)
                     auraeLog("[PTT] Transcripción completada: \"\(text)\"")
                     self.pasteDirectly(text: text, targetApp: destinationApp)
                 } else {
@@ -1117,118 +1182,215 @@ struct AppearanceTabView: View {
     }
 }
 
-// MARK: - Tab 4: Settings View (Modo Discreto, etc.)
+// MARK: - Tab 4: Settings View (Modo Discreto, Auto-Launch, Diccionario)
 
 struct SettingsTabView: View {
     @ObservedObject var state = AppState.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Preferencias del Sistema")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-                .padding(.top, 12)
-
-            // Sound Effects Card
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    ZStack {
-                        Circle()
-                            .fill(Color.purple.opacity(0.15))
-                            .frame(width: 32, height: 32)
-                        Image(systemName: state.config.sound_effects ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                            .foregroundColor(.purple)
-                            .font(.system(size: 14))
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Sonidos de confirmación")
-                            .font(.system(size: 13, weight: .medium))
-                        Text(state.config.sound_effects ? "Sonidos Pop y Tink activos" : "Modo Discreto (silencioso)")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: Binding(
-                        get: { state.config.sound_effects },
-                        set: { val in
-                            state.config.sound_effects = val
-                            state.saveConfig()
-                        }
-                    ))
-                    .toggleStyle(SwitchToggleStyle(tint: .purple))
-                    .labelsHidden()
-                }
-            }
-            .padding(12)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
-            .cornerRadius(10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
-
-            // Auto-Launch at Login Card
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    ZStack {
-                        Circle()
-                            .fill(Color.blue.opacity(0.15))
-                            .frame(width: 32, height: 32)
-                        Image(systemName: "macwindow.and.cursorarrow")
-                            .foregroundColor(.blue)
-                            .font(.system(size: 14))
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Iniciar con macOS")
-                            .font(.system(size: 13, weight: .medium))
-                        Text(state.launchAtLogin ? "Listo para iniciar al encender el equipo" : "Desactivado (inicio manual)")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-
-                    Spacer()
-
-                    Toggle("", isOn: Binding(
-                        get: { state.launchAtLogin },
-                        set: { state.setLaunchAtLogin($0) }
-                    ))
-                    .toggleStyle(SwitchToggleStyle(tint: .purple))
-                    .labelsHidden()
-                }
-            }
-            .padding(12)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
-            .cornerRadius(10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-            )
-
-            // Info Card
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "lock.shield.fill")
-                        .foregroundColor(.green)
-                        .font(.system(size: 12))
-                    Text("Privacidad y Rendimiento Local")
-                        .font(.system(size: 11, weight: .bold))
-                }
-                Text("Todo el procesamiento de voz ocurre exclusivamente en tu Mac mediante whisper.cpp con aceleración por hardware Metal GPU. Ningún dato sale de tu equipo.")
-                    .font(.system(size: 11))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Preferencias del Sistema")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(12)
-            .background(Color.green.opacity(0.07))
-            .cornerRadius(10)
+                    .padding(.top, 10)
 
-            Spacer()
+                // Sound Effects Card
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        ZStack {
+                            Circle()
+                                .fill(Color.purple.opacity(0.15))
+                                .frame(width: 32, height: 32)
+                            Image(systemName: state.config.sound_effects ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                                .foregroundColor(.purple)
+                                .font(.system(size: 14))
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Sonidos de confirmación")
+                                .font(.system(size: 13, weight: .medium))
+                            Text(state.config.sound_effects ? "Sonidos Pop y Tink activos" : "Modo Discreto (silencioso)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        Toggle("", isOn: Binding(
+                            get: { state.config.sound_effects },
+                            set: { val in
+                                state.config.sound_effects = val
+                                state.saveConfig()
+                            }
+                        ))
+                        .toggleStyle(SwitchToggleStyle(tint: .purple))
+                        .labelsHidden()
+                    }
+                }
+                .padding(12)
+                .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+                // Auto-Launch at Login Card
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue.opacity(0.15))
+                                .frame(width: 32, height: 32)
+                            Image(systemName: "macwindow.and.cursorarrow")
+                                .foregroundColor(.blue)
+                                .font(.system(size: 14))
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Iniciar con macOS")
+                                .font(.system(size: 13, weight: .medium))
+                            Text(state.launchAtLogin ? "Listo para iniciar al encender el equipo" : "Desactivado (inicio manual)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        Toggle("", isOn: Binding(
+                            get: { state.launchAtLogin },
+                            set: { state.setLaunchAtLogin($0) }
+                        ))
+                        .toggleStyle(SwitchToggleStyle(tint: .purple))
+                        .labelsHidden()
+                    }
+                }
+                .padding(12)
+                .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+                // Dictionary Card
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        ZStack {
+                            Circle()
+                                .fill(Color.orange.opacity(0.15))
+                                .frame(width: 32, height: 32)
+                            Image(systemName: "character.book.closed.fill")
+                                .foregroundColor(.orange)
+                                .font(.system(size: 14))
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Diccionario Personalizado")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Reemplaza términos o nombres automáticamente")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    // Add Entry Form
+                    HStack(spacing: 6) {
+                        TextField("Escuchado", text: $state.newDictionaryWord)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .font(.system(size: 11))
+
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+
+                        TextField("Reemplazo", text: $state.newDictionaryReplacement)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .font(.system(size: 11))
+
+                        Button(action: {
+                            guard !state.newDictionaryWord.isEmpty && !state.newDictionaryReplacement.isEmpty else { return }
+                            state.addDictionaryEntry(word: state.newDictionaryWord, replacement: state.newDictionaryReplacement)
+                            state.newDictionaryWord = ""
+                            state.newDictionaryReplacement = ""
+                        }) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundColor(.purple)
+                        }
+                        .buttonStyle(BorderlessButtonStyle())
+                        .disabled(state.newDictionaryWord.trimmingCharacters(in: .whitespaces).isEmpty || state.newDictionaryReplacement.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+
+                    // Existing Entries List
+                    if state.dictionary.isEmpty {
+                        Text("No hay reglas añadidas.")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 4)
+                    } else {
+                        VStack(spacing: 4) {
+                            ForEach(state.dictionary) { entry in
+                                HStack {
+                                    Text(entry.word)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(.secondary)
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(.secondary.opacity(0.6))
+                                    Text(entry.replacement)
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundColor(.primary)
+
+                                    Spacer()
+
+                                    Button(action: {
+                                        state.removeDictionaryEntry(id: entry.id)
+                                    }) {
+                                        Image(systemName: "xmark.circle")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.red.opacity(0.7))
+                                    }
+                                    .buttonStyle(BorderlessButtonStyle())
+                                }
+                                .padding(.vertical, 3)
+                                .padding(.horizontal, 8)
+                                .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+                                .cornerRadius(6)
+                            }
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+
+                // Info Card
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "lock.shield.fill")
+                            .foregroundColor(.green)
+                            .font(.system(size: 12))
+                        Text("Privacidad y Rendimiento Local")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    Text("Todo el procesamiento de voz ocurre exclusivamente en tu Mac mediante whisper.cpp con aceleración por hardware Metal GPU. Ningún dato sale de tu equipo.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(Color.green.opacity(0.07))
+                .cornerRadius(10)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
         }
-        .padding(.horizontal, 16)
     }
 }
 
