@@ -24,3 +24,4 @@ Thumbs.db
 test
 test.*
 .github/context-mode/
+.codegraph/
