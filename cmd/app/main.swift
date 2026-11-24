@@ -97,8 +97,19 @@ class AppState: ObservableObject {
     @Published var launchAtLogin: Bool = false
     @Published var copiedId: String? = nil
     @Published var searchText: String = ""
+    @Published var dictionarySearchText: String = ""
     @Published var newDictionaryWord: String = ""
     @Published var newDictionaryReplacement: String = ""
+
+    var filteredDictionary: [DictionaryEntry] {
+        if dictionarySearchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            return dictionary
+        }
+        return dictionary.filter {
+            $0.word.localizedCaseInsensitiveContains(dictionarySearchText) ||
+            $0.replacement.localizedCaseInsensitiveContains(dictionarySearchText)
+        }
+    }
 
     let configURL: URL
     let historyURL: URL
@@ -827,8 +838,8 @@ struct PopoverView: View {
             // Tab Picker
             Picker("", selection: $state.selectedTab) {
                 Text("Historial").tag(0)
-                Text("Atajo").tag(1)
-                Text("Estilo").tag(2)
+                Text("Diccionario").tag(1)
+                Text("Atajo").tag(2)
                 Text("Ajustes").tag(3)
             }
             .pickerStyle(SegmentedPickerStyle())
@@ -842,9 +853,9 @@ struct PopoverView: View {
                 if state.selectedTab == 0 {
                     HistoryTabView()
                 } else if state.selectedTab == 1 {
-                    HotkeyTabView()
+                    DictionaryTabView()
                 } else if state.selectedTab == 2 {
-                    AppearanceTabView()
+                    HotkeyTabView()
                 } else {
                     SettingsTabView()
                 }
@@ -1022,7 +1033,164 @@ struct HistoryCard: View {
     }
 }
 
-// MARK: - Tab 2: Hotkey View
+// MARK: - Tab 2: Diccionario View (Scrollable con Buscador)
+
+struct DictionaryTabView: View {
+    @ObservedObject var state = AppState.shared
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Search & Clear Header
+            HStack {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                        .font(.system(size: 12))
+                    TextField("Buscar regla o reemplazo...", text: $state.dictionarySearchText)
+                        .textFieldStyle(PlainTextFieldStyle())
+                        .font(.system(size: 12))
+
+                    if !state.dictionarySearchText.isEmpty {
+                        Button(action: { state.dictionarySearchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(BorderlessButtonStyle())
+                    }
+                }
+                .padding(6)
+                .background(Color(NSColor.controlBackgroundColor))
+                .cornerRadius(6)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+
+            // Add Rule Card
+            VStack(alignment: .leading, spacing: 6) {
+                Text("AÑADIR NUEVA REGLA")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.secondary)
+                    .tracking(0.5)
+
+                HStack(spacing: 6) {
+                    TextField("Escuchado (ej: aurea)", text: $state.newDictionaryWord)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .font(.system(size: 11))
+
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+
+                    TextField("Reemplazo (ej: Aurae)", text: $state.newDictionaryReplacement)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .font(.system(size: 11))
+
+                    Button(action: {
+                        let w = state.newDictionaryWord.trimmingCharacters(in: .whitespaces)
+                        let r = state.newDictionaryReplacement.trimmingCharacters(in: .whitespaces)
+                        guard !w.isEmpty && !r.isEmpty else { return }
+                        state.addDictionaryEntry(word: w, replacement: r)
+                        state.newDictionaryWord = ""
+                        state.newDictionaryReplacement = ""
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 12))
+                            Text("Añadir")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.purple)
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .disabled(state.newDictionaryWord.trimmingCharacters(in: .whitespaces).isEmpty || state.newDictionaryReplacement.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(10)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+            .cornerRadius(8)
+            .padding(.horizontal, 14)
+
+            // Scrollable List of Rules
+            if state.filteredDictionary.isEmpty {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "character.book.closed")
+                        .font(.system(size: 32))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text(state.dictionary.isEmpty ? "No hay reglas guardadas aún." : "Sin resultados para la búsqueda.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                    Text(state.dictionary.isEmpty ? "Agrega palabras o nombres propios que el modelo confunda." : "Verifica los términos o limpia el buscador.")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                    Spacer()
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 6) {
+                        ForEach(state.filteredDictionary) { entry in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(spacing: 6) {
+                                        Text(entry.word)
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.purple)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.purple.opacity(0.12))
+                                            .cornerRadius(4)
+
+                                        Image(systemName: "arrow.right")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.secondary.opacity(0.7))
+
+                                        Text(entry.replacement)
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundColor(.primary)
+                                    }
+                                }
+
+                                Spacer()
+
+                                Button(action: {
+                                    state.removeDictionaryEntry(id: entry.id)
+                                }) {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.red.opacity(0.8))
+                                        .padding(5)
+                                        .background(Color.red.opacity(0.1))
+                                        .clipShape(Circle())
+                                }
+                                .buttonStyle(BorderlessButtonStyle())
+                                .help("Eliminar regla")
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Tab 3: Hotkey View
 
 struct HotkeyTabView: View {
     @ObservedObject var state = AppState.shared
@@ -1092,97 +1260,7 @@ struct HotkeyTabView: View {
     }
 }
 
-// MARK: - Tab 3: Appearance View (Themes and Live Preview)
-
-struct AppearanceTabView: View {
-    @ObservedObject var state = AppState.shared
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Personaliza el estilo de las ondas")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 12)
-
-            // Live Preview Box
-            VStack(spacing: 8) {
-                Text("VISTA PREVIA")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .tracking(1)
-
-                // The Pill preview
-                HStack(spacing: 5) {
-                    ForEach(0..<4) { i in
-                        let hex = i < state.config.waveform_colors.count ? state.config.waveform_colors[i] : "#A855F7"
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(state.hexToColor(hex))
-                            .frame(width: 4, height: [12, 22, 16, 9][i])
-                            .shadow(color: state.hexToColor(hex).opacity(0.8), radius: 3)
-                    }
-                }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 8)
-                .background(Color.black.opacity(0.7))
-                .cornerRadius(16)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                )
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
-            .cornerRadius(10)
-
-            // Theme Options
-            Text("TEMAS PREDEFINIDOS")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(spacing: 8) {
-                ForEach(predefinedThemes) { theme in
-                    Button(action: { state.updateTheme(theme) }) {
-                        HStack {
-                            Text(theme.name)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.primary)
-
-                            Spacer()
-
-                            // Color swatches
-                            HStack(spacing: 4) {
-                                ForEach(theme.colors, id: \.self) { c in
-                                    Circle()
-                                        .fill(state.hexToColor(c))
-                                        .frame(width: 14, height: 14)
-                                }
-                            }
-
-                            if state.config.waveform_colors == theme.colors {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.purple)
-                                    .padding(.leading, 6)
-                            }
-                        }
-                        .padding(10)
-                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(BorderlessButtonStyle())
-                }
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-    }
-}
-
-// MARK: - Tab 4: Settings View (Modo Discreto, Auto-Launch, Diccionario)
+// MARK: - Tab 4: Settings View (Modo Discreto, Auto-Launch, Temas)
 
 struct SettingsTabView: View {
     @ObservedObject var state = AppState.shared
@@ -1274,91 +1352,59 @@ struct SettingsTabView: View {
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
 
-                // Dictionary Card
+                // Waveform Themes Card
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         ZStack {
                             Circle()
-                                .fill(Color.orange.opacity(0.15))
+                                .fill(Color.purple.opacity(0.15))
                                 .frame(width: 32, height: 32)
-                            Image(systemName: "character.book.closed.fill")
-                                .foregroundColor(.orange)
+                            Image(systemName: "paintpalette.fill")
+                                .foregroundColor(.purple)
                                 .font(.system(size: 14))
                         }
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Diccionario Personalizado")
+                            Text("Estilo Visual de Ondas")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Reemplaza términos o nombres automáticamente")
+                            Text("Paleta de colores para la píldora flotante")
                                 .font(.system(size: 11))
                                 .foregroundColor(.secondary)
                         }
                     }
 
-                    // Add Entry Form
-                    HStack(spacing: 6) {
-                        TextField("Escuchado", text: $state.newDictionaryWord)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .font(.system(size: 11))
-
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-
-                        TextField("Reemplazo", text: $state.newDictionaryReplacement)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .font(.system(size: 11))
-
-                        Button(action: {
-                            guard !state.newDictionaryWord.isEmpty && !state.newDictionaryReplacement.isEmpty else { return }
-                            state.addDictionaryEntry(word: state.newDictionaryWord, replacement: state.newDictionaryReplacement)
-                            state.newDictionaryWord = ""
-                            state.newDictionaryReplacement = ""
-                        }) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 16))
-                                .foregroundColor(.purple)
-                        }
-                        .buttonStyle(BorderlessButtonStyle())
-                        .disabled(state.newDictionaryWord.trimmingCharacters(in: .whitespaces).isEmpty || state.newDictionaryReplacement.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-
-                    // Existing Entries List
-                    if state.dictionary.isEmpty {
-                        Text("No hay reglas añadidas.")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .padding(.vertical, 4)
-                    } else {
-                        VStack(spacing: 4) {
-                            ForEach(state.dictionary) { entry in
+                    // Theme selector buttons
+                    VStack(spacing: 6) {
+                        ForEach(predefinedThemes) { theme in
+                            Button(action: { state.updateTheme(theme) }) {
                                 HStack {
-                                    Text(entry.word)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundColor(.secondary)
-                                    Image(systemName: "arrow.right")
-                                        .font(.system(size: 9))
-                                        .foregroundColor(.secondary.opacity(0.6))
-                                    Text(entry.replacement)
-                                        .font(.system(size: 11, weight: .bold))
+                                    Text(theme.name)
+                                        .font(.system(size: 11, weight: .medium))
                                         .foregroundColor(.primary)
 
                                     Spacer()
 
-                                    Button(action: {
-                                        state.removeDictionaryEntry(id: entry.id)
-                                    }) {
-                                        Image(systemName: "xmark.circle")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(.red.opacity(0.7))
+                                    HStack(spacing: 4) {
+                                        ForEach(theme.colors, id: \.self) { c in
+                                            Circle()
+                                                .fill(state.hexToColor(c))
+                                                .frame(width: 12, height: 12)
+                                        }
                                     }
-                                    .buttonStyle(BorderlessButtonStyle())
+
+                                    if state.config.waveform_colors == theme.colors {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundColor(.purple)
+                                            .padding(.leading, 4)
+                                    }
                                 }
-                                .padding(.vertical, 3)
-                                .padding(.horizontal, 8)
-                                .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
                                 .cornerRadius(6)
                             }
+                            .buttonStyle(BorderlessButtonStyle())
                         }
                     }
                 }
