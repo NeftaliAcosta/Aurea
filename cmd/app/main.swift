@@ -5,6 +5,7 @@ import QuartzCore
 import ApplicationServices
 import ServiceManagement
 import AVFoundation
+import Darwin
 
 // MARK: - Logging
 
@@ -554,7 +555,7 @@ class PushToTalkListener {
     static let shared = PushToTalkListener()
 
     var isRecording = false
-    var recProcess: Process?
+    var recordingPid: pid_t = 0
     let audioPath = "/tmp/aurae_ptt.wav"
     let auraeBin: String
     let hud = HUDOverlay()
@@ -644,26 +645,40 @@ class PushToTalkListener {
         auraeLog("[PTT] Grabación iniciada. App destino: \(self.targetApp?.localizedName ?? "Desconocida") (PID: \(self.targetApp?.processIdentifier ?? 0))")
 
         DispatchQueue.main.async {
-            (NSApp.delegate as? AppDelegate)?.popover.performClose(nil)
+            (NSApp.delegate as? AppDelegate)?.closePopover()
             AppState.shared.isListening = true
         }
 
         hud.showListening()
         try? FileManager.default.removeItem(atPath: audioPath)
 
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/sox")
-        
         let selectedDevice = AppState.shared.config.audio_device
+        let cArgs: [String]
         if selectedDevice != "default" && AppState.shared.audioDevices.contains(where: { $0.id == selectedDevice }) {
-            p.arguments = ["-q", "-t", "coreaudio", selectedDevice, "-c", "1", "-r", "16000", audioPath]
-            auraeLog("[PTT] Grabando con micrófono seleccionado: \"\(selectedDevice)\"")
+            // Guarantee NFC (composed) canonical mapping so C byte comparison in SoX coreaudio.c matches verbatim
+            let nfcDevice = (selectedDevice as NSString).precomposedStringWithCanonicalMapping
+            cArgs = ["/opt/homebrew/bin/sox", "-q", "-t", "coreaudio", nfcDevice, "-c", "1", "-r", "16000", audioPath]
+            auraeLog("[PTT] Grabando con micrófono seleccionado (posix_spawn): \"\(nfcDevice)\"")
         } else {
-            p.arguments = ["-q", "-d", "-c", "1", "-r", "16000", audioPath]
-            auraeLog("[PTT] Grabando con micrófono predeterminado (-d)")
+            cArgs = ["/opt/homebrew/bin/sox", "-q", "-d", "-c", "1", "-r", "16000", audioPath]
+            auraeLog("[PTT] Grabando con micrófono predeterminado (posix_spawn -d)")
         }
-        try? p.run()
-        self.recProcess = p
+
+        var cArgv: [UnsafeMutablePointer<CChar>?] = cArgs.map { strdup($0) }
+        cArgv.append(nil)
+
+        var pid: pid_t = 0
+        let spawnStatus = posix_spawn(&pid, "/opt/homebrew/bin/sox", nil, nil, &cArgv, environ)
+        for ptr in cArgv {
+            if let p = ptr { free(p) }
+        }
+
+        if spawnStatus == 0 {
+            self.recordingPid = pid
+        } else {
+            auraeLog("[PTT] Error al iniciar sox con posix_spawn: \(spawnStatus)")
+            self.recordingPid = 0
+        }
     }
 
     func cancelRecording() {
@@ -673,17 +688,22 @@ class PushToTalkListener {
         DispatchQueue.main.async { AppState.shared.isListening = false }
 
         hud.hide()
-        let processToStop = self.recProcess
-        self.recProcess = nil
+        let pidToStop = self.recordingPid
+        self.recordingPid = 0
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            processToStop?.interrupt()
-            let startTime = Date()
-            while processToStop?.isRunning == true && Date().timeIntervalSince(startTime) < 0.5 {
-                usleep(30000)
-            }
-            if processToStop?.isRunning == true {
-                processToStop?.terminate()
+            if pidToStop > 0 {
+                kill(pidToStop, SIGINT)
+                let startTime = Date()
+                var status: Int32 = 0
+                while Date().timeIntervalSince(startTime) < 0.5 {
+                    let res = waitpid(pidToStop, &status, WNOHANG)
+                    if res == pidToStop || res == -1 {
+                        break
+                    }
+                    usleep(30000)
+                }
+                kill(pidToStop, SIGKILL)
             }
             if let path = self?.audioPath {
                 try? FileManager.default.removeItem(atPath: path)
@@ -698,20 +718,25 @@ class PushToTalkListener {
         DispatchQueue.main.async { AppState.shared.isListening = false }
 
         hud.showProcessing()
-        let processToStop = self.recProcess
-        self.recProcess = nil
+        let pidToStop = self.recordingPid
+        self.recordingPid = 0
         let destinationApp = self.targetApp
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
 
-            processToStop?.interrupt()
-            let startTime = Date()
-            while processToStop?.isRunning == true && Date().timeIntervalSince(startTime) < 0.8 {
-                usleep(30000)
-            }
-            if processToStop?.isRunning == true {
-                processToStop?.terminate()
+            if pidToStop > 0 {
+                kill(pidToStop, SIGINT)
+                let startTime = Date()
+                var status: Int32 = 0
+                while Date().timeIntervalSince(startTime) < 0.8 {
+                    let res = waitpid(pidToStop, &status, WNOHANG)
+                    if res == pidToStop || res == -1 {
+                        break
+                    }
+                    usleep(30000)
+                }
+                kill(pidToStop, SIGKILL)
             }
 
             if let attrs = try? FileManager.default.attributesOfItem(atPath: self.audioPath),
@@ -1549,9 +1574,10 @@ struct SettingsTabView: View {
 
 // MARK: - App Delegate & Menu Bar Setup
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
+    var eventMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set up Menubar Item
@@ -1566,6 +1592,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let popover = NSPopover()
         popover.contentSize = NSSize(width: 410, height: 540)
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentViewController = NSHostingController(rootView: PopoverView())
         self.popover = popover
 
@@ -1575,15 +1602,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func togglePopover() {
-        guard let button = statusItem.button else { return }
         if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else {
-            AppState.shared.hasAccessibilityPermission = AXIsProcessTrusted()
-            AppState.shared.loadHistory()
-            AppState.shared.refreshAudioDevices()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            NSApp.activate()
+            showPopover()
+        }
+    }
+
+    func showPopover() {
+        guard let button = statusItem.button else { return }
+        AppState.shared.hasAccessibilityPermission = AXIsProcessTrusted()
+        AppState.shared.loadHistory()
+        AppState.shared.refreshAudioDevices()
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Global event monitor closes popover on any click outside
+        if eventMonitor == nil {
+            eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                self?.closePopover()
+            }
+        }
+    }
+
+    func closePopover() {
+        popover.performClose(nil)
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
         }
     }
 }
