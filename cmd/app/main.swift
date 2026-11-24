@@ -350,7 +350,11 @@ class HUDOverlay {
     let barSpacing: CGFloat = 4.0
     let baseHeights: [CGFloat] = [6, 10, 8, 5]
     let maxHeights: [CGFloat] = [18, 22, 19, 15]
-    let durations: [Double] = [0.32, 0.45, 0.28, 0.38]
+
+    private var meterTimer: DispatchSourceTimer?
+    private var smoothedLevel: Double = 0.0
+    private var fileHandle: FileHandle?
+    private let meterQueue = DispatchQueue(label: "com.aurae.hudmeter", qos: .userInteractive)
 
     init() {
         setupWindow()
@@ -435,44 +439,124 @@ class HUDOverlay {
         window.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    func showListening() {
+    func showListening(audioPath: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let window = self.window else { return }
+            self.stopLevelMeter()
             self.reposition()
             self.updateColors()
             if AppState.shared.config.sound_effects {
                 NSSound(named: "Pop")?.play()
             }
 
+            // Reset wave bars to resting baseline heights
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             for (i, bar) in self.waveBars.enumerated() {
                 bar.removeAllAnimations()
-                let anim = CABasicAnimation(keyPath: "bounds.size.height")
-                anim.duration = self.durations[i]
-                anim.fromValue = self.baseHeights[i]
-                anim.toValue = self.maxHeights[i]
-                anim.autoreverses = true
-                anim.repeatCount = .infinity
-                anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                bar.add(anim, forKey: "wave")
+                let by = (32.0 - self.baseHeights[i]) / 2.0
+                bar.frame = CGRect(x: bar.frame.origin.x, y: by, width: self.barWidth, height: self.baseHeights[i])
             }
+            CATransaction.commit()
 
             window.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.10
                 window.animator().alphaValue = 1.0
             }
+
+            self.startLevelMeter(audioPath: audioPath)
         }
+    }
+
+    private func startLevelMeter(audioPath: String) {
+        meterTimer?.cancel()
+        meterTimer = nil
+        try? fileHandle?.close()
+        fileHandle = nil
+        smoothedLevel = 0.0
+
+        let timer = DispatchSource.makeTimerSource(queue: meterQueue)
+        timer.schedule(deadline: .now() + 0.05, repeating: 0.035) // ~28 fps for smooth live waves
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+
+            if self.fileHandle == nil {
+                self.fileHandle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: audioPath))
+            }
+            guard let handle = self.fileHandle else { return }
+
+            let currentLen = handle.seekToEndOfFile()
+            guard currentLen > 100 else { return }
+
+            // Read last 2048 bytes (~512 samples of 32-bit audio)
+            let readLen: UInt64 = min(currentLen - 44, 2048)
+            handle.seek(toFileOffset: currentLen - readLen)
+            let data = handle.readData(ofLength: Int(readLen))
+            let sampleCount = data.count / 4
+            guard sampleCount > 0 else { return }
+
+            var sumSq: Double = 0
+            data.withUnsafeBytes { raw in
+                let ptr = raw.bindMemory(to: Int32.self)
+                for i in 0..<sampleCount {
+                    let s = Double(ptr[i]) / Double(Int32.max)
+                    sumSq += s * s
+                }
+            }
+            let rms = sqrt(sumSq / Double(sampleCount))
+
+            // Map RMS amplitude: noise floor ~0.003, normal voice range up to ~0.14
+            let normalized = max(0.0, min(1.0, (rms - 0.003) / 0.12))
+            // Fast attack, gentle decay
+            let alpha = normalized > self.smoothedLevel ? 0.45 : 0.20
+            self.smoothedLevel = self.smoothedLevel * (1.0 - alpha) + normalized * alpha
+
+            let factors: [CGFloat] = [0.70, 1.0, 0.85, 0.65]
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                for (i, bar) in self.waveBars.enumerated() {
+                    let baseH = self.baseHeights[i]
+                    let maxH = self.maxHeights[i]
+                    let targetH = baseH + (maxH - baseH) * CGFloat(self.smoothedLevel) * factors[i]
+                    let by = (32.0 - targetH) / 2.0
+                    bar.frame = CGRect(x: bar.frame.origin.x, y: by, width: self.barWidth, height: targetH)
+                }
+                CATransaction.commit()
+            }
+        }
+        timer.resume()
+        self.meterTimer = timer
+    }
+
+    private func stopLevelMeter() {
+        meterTimer?.cancel()
+        meterTimer = nil
+        try? fileHandle?.close()
+        fileHandle = nil
+        smoothedLevel = 0.0
     }
 
     func showProcessing() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            self.stopLevelMeter()
             if AppState.shared.config.sound_effects {
                 NSSound(named: "Tink")?.play()
             }
 
-            for bar in self.waveBars {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for (i, bar) in self.waveBars.enumerated() {
                 bar.removeAllAnimations()
+                let by = (32.0 - self.baseHeights[i]) / 2.0
+                bar.frame = CGRect(x: bar.frame.origin.x, y: by, width: self.barWidth, height: self.baseHeights[i])
+            }
+            CATransaction.commit()
+
+            for bar in self.waveBars {
                 let anim = CABasicAnimation(keyPath: "opacity")
                 anim.duration = 0.2
                 anim.fromValue = 1.0
@@ -487,6 +571,7 @@ class HUDOverlay {
     func hide() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let window = self.window else { return }
+            self.stopLevelMeter()
             for bar in self.waveBars {
                 bar.removeAllAnimations()
             }
@@ -502,6 +587,7 @@ class HUDOverlay {
     func hideImmediate() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let window = self.window else { return }
+            self.stopLevelMeter()
             for bar in self.waveBars {
                 bar.removeAllAnimations()
             }
@@ -649,7 +735,7 @@ class PushToTalkListener {
             AppState.shared.isListening = true
         }
 
-        hud.showListening()
+        hud.showListening(audioPath: audioPath)
         try? FileManager.default.removeItem(atPath: audioPath)
 
         let selectedDevice = AppState.shared.config.audio_device
